@@ -284,6 +284,8 @@ class DevBgScraper:
                 return "Hybrid"
             elif has_remote:
                 return "Fully Remote"
+            else:
+                return "On-site"
 
         return ""
 
