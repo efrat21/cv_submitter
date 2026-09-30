@@ -210,7 +210,11 @@ def test_job_parsing():
     assert job.employment_type == "Full-time"
 
 def test_fetch_jobs():
-    jobs = fetch_jobs("https://devbg.com/jobs")
+    jobs = fetch_jobs("https://dev.bg/company/jobs/ml-ai-data/?_seniority=intern%2Cjunior%2Cmid-level")
     assert jobs is not None
     assert len(jobs) > 0
     assert all(isinstance(job, Job) for job in jobs)
+
+if __name__ == "__main__":
+    test_job_model()
+    test_fetch_jobs()
