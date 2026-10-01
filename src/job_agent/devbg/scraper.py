@@ -99,6 +99,55 @@ class DevBgScraper:
 
         return discovered
 
+    @staticmethod
+    def clean_description(body: str) -> str:
+        """
+        Strip DEV.BG site headers, navigation, promo banners, categories,
+        save/report buttons, and application form / site footers from the job description.
+        """
+        content = body.strip()
+
+        # 1. Strip top boilerplate (navigation, banners, company/title/apply header, categories, save/report buttons)
+        tech_stack_match = re.search(
+            r"(?:TECH STACK\s*/\s*ИЗИСКВАНИЯ|Tech Stack\s*/\s*Изисквания|TECH STACK)\s*",
+            content,
+            re.IGNORECASE,
+        )
+        if tech_stack_match:
+            content = content[tech_stack_match.end():]
+        else:
+            report_match = re.search(
+                r"Съобщи проблем(?:Megaphone icon)?\s*",
+                content,
+                re.IGNORECASE,
+            )
+            if report_match:
+                content = content[report_match.end():]
+            else:
+                cat_match = re.search(
+                    r"(?:ОБЯВАТА Е ПУБЛИКУВАНА В СЛЕДНИТЕ КАТЕГОРИИ|Обявата е публикувана в следните категории).*?(?:Публикувана\s+преди[^\n]*\n+)?(?:Запази\s*\n+)?(?:Съобщи проблем[^\n]*\n+)?",
+                    content,
+                    re.IGNORECASE | re.DOTALL,
+                )
+                if cat_match:
+                    content = content[cat_match.end():]
+
+        # 2. Strip bottom boilerplate (application form and DEV.BG footer)
+        bottom_markers = [
+            r"\n\s*(?:\+\s*\n+)?Кандидатура за позиция",
+            r"\n\s*Вашите данни\*",
+            r"\n\s*Файлове, свързани с кандидатурата",
+            r"\n\s*DEV\.BG Logo",
+            r"\n\s*Job board за IT обяви",
+            r"\n\s*Споразумение за обработване на лични данни",
+        ]
+        for marker in bottom_markers:
+            m = re.search(marker, content, re.IGNORECASE)
+            if m:
+                content = content[: m.start()]
+
+        return content.strip()
+
     def scrape_job(self, page: Page, url: str) -> Job:
         """
         Scrape detailed information from a single job posting URL.
@@ -113,21 +162,24 @@ class DevBgScraper:
 
         body = page.locator("body").inner_text()
 
+        # Clean description by removing navigation header and footer form
+        description = self.clean_description(body)
+
         # Scoped metadata text around the header / apply button
         header_meta = self.extract_header_meta(body)
 
         location = self.get_location(header_meta, fallback_body=header_meta)
-        work_model = self.get_work_model(header_meta, description=body)
+        work_model = self.get_work_model(header_meta, description=description)
         date_text = self.get_date(body)
         date_published = self.get_date_published(body, page=page)
         tags = self.get_tags(page, body=body)
-        requirements, benefits = self.get_requirements_and_benefits(page, body)
+        requirements, benefits = self.get_requirements_and_benefits(page, description or body)
 
         return Job(
             url=url,
             title=title,
             company=company,
-            description=body,
+            description=description,
             location=location,
             work_model=work_model,
             employment_type="Full-time",
@@ -631,20 +683,21 @@ def parse_job(text: str, url: str = "https://devbg.com/jobs") -> Job:
     if not company:
         company = lines[1] if len(lines) > 1 else "Unknown Company"
 
+    description = DevBgScraper.clean_description(text)
     header_meta = DevBgScraper.extract_header_meta(text)
     location = DevBgScraper.get_location(header_meta, fallback_body=text)
-    work_model = DevBgScraper.get_work_model(header_meta, description=text)
+    work_model = DevBgScraper.get_work_model(header_meta, description=description)
     date_text = DevBgScraper.get_date(text)
     date_published = DevBgScraper.get_date_published(text)
     tags = DevBgScraper.get_tags(None, body=text)
 
-    reqs, bens = DevBgScraper.get_requirements_and_benefits(None, text)
+    reqs, bens = DevBgScraper.get_requirements_and_benefits(None, description or text)
 
     return Job(
         url=url,
         title=title,
         company=company,
-        description=text.strip(),
+        description=description,
         location=location or "София",
         work_model=work_model or "On-site",
         employment_type="Full-time",
