@@ -1,51 +1,72 @@
-def run():
+import argparse
+import sys
 
-    cv = load_cv("cv.txt")
+try:
+    from job_agent.database import JobDatabase
+    from job_agent.devbg.scraper import DevBgScraper
+except ImportError:
+    from src.job_agent.database import JobDatabase
+    from src.job_agent.devbg.scraper import DevBgScraper
 
-    jobs = devbg.get_jobs(JOBS_URL)
-    
-    dashboard.show(jobs)
 
-    for job in jobs:
+def main():
+    parser = argparse.ArgumentParser(
+        description="DEV.BG Job Discovery Agent"
+    )
+    parser.add_argument(
+        "--url",
+        default="https://dev.bg/company/jobs/ml-ai-data/",
+        help="Start URL to scrape (default: https://dev.bg/company/jobs/ml-ai-data/)",
+    )
+    parser.add_argument(
+        "--max-jobs",
+        type=int,
+        default=10,
+        help="Maximum jobs to scrape (default: 10)",
+    )
+    parser.add_argument(
+        "--max-pages",
+        type=int,
+        default=1,
+        help="Maximum pages to scrape (default: 1)",
+    )
+    parser.add_argument(
+        "--db",
+        "--database",
+        dest="database",
+        default="data/jobs.db",
+        help="Path to SQLite database (default: data/jobs.db)",
+    )
+    parser.add_argument(
+        "--headless",
+        action="store_true",
+        default=False,
+        help="Run browser in headless mode",
+    )
 
-        if database.already_processed(job.url):
-            continue
+    args = parser.parse_args()
 
-        if not deterministic_filter(job):
-            database.save_rejected(job)
-            continue
+    print("================================")
+    print("DEV.BG JOB AGENT")
+    print("Milestone 1 - Job Discovery")
+    print("================================\n")
+    print(f"URL: {args.url}")
+    print(f"Maximum jobs: {args.max_jobs}")
+    print(f"Maximum pages: {args.max_pages}")
+    print(f"Database: {args.database}")
 
-        evaluation = llm.evaluate(
-            cv=cv,
-            job=job
-        )
+    db = JobDatabase(path=args.database)
+    scraper = DevBgScraper(
+        headless=args.headless,
+        max_jobs=args.max_jobs,
+        max_pages=args.max_pages,
+    )
 
-        database.save_evaluation(
-            job,
-            evaluation
-        )
+    try:
+        scraper.run(start_url=args.url, database=db)
+    finally:
+        db.close()
 
-        if not evaluation.suitable:
-            continue
 
-        letter = llm.generate_cover_letter(
-            cv=cv,
-            job=job,
-            evaluation=evaluation
-        )
-
-        if MODE == "DRY_RUN":
-            continue
-
-        application.fill(
-            job=job,
-            cv=cv,
-            cover_letter=letter
-        )
-
-        if MODE == "REVIEW":
-            wait_for_user()
-
-        application.submit()
-
-        database.mark_submitted(job)
+if __name__ == "__main__":
+    main()

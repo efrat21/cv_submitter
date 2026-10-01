@@ -7,7 +7,10 @@ from urllib.parse import urlparse
 
 from playwright.sync_api import Page, sync_playwright
 
-from src.job_agent.models import Job
+try:
+    from job_agent.models import Job
+except ImportError:
+    from src.job_agent.models import Job
 
 logger = logging.getLogger(__name__)
 
@@ -43,7 +46,7 @@ class DevBgScraper:
                 separator = "&" if "?" in start_url else "?"
                 url = f"{start_url}{separator}_paged={page_number}"
 
-            logger.info("[LISTING PAGE %d] %s", page_number, url)
+            print(f"\n[LISTING PAGE {page_number}]")
 
             try:
                 page.goto(url, wait_until="domcontentloaded", timeout=60000)
@@ -57,7 +60,7 @@ class DevBgScraper:
                 "elements => elements.map(el => el.href)",
             )
 
-            logger.info("Found %d candidate job links on page %d", len(links), page_number)
+            print(f"Found {len(links)} candidate job links\n")
 
             if not links:
                 break
@@ -84,7 +87,7 @@ class DevBgScraper:
                 discovered.append(clean_url)
                 new_links_found += 1
 
-                logger.info("  %02d. %s", len(discovered), clean_url)
+                print(f"  {len(discovered):02d}. {clean_url}")
 
                 if self.max_jobs and len(discovered) >= self.max_jobs:
                     return discovered
@@ -100,7 +103,7 @@ class DevBgScraper:
         """
         Scrape detailed information from a single job posting URL.
         """
-        logger.info("[JOB] %s", url)
+        print(f"\n[JOB] {url}")
 
         page.goto(url, wait_until="domcontentloaded", timeout=60000)
         page.wait_for_timeout(1000)
@@ -556,7 +559,7 @@ class DevBgScraper:
         Returns the list of successfully scraped Job objects.
         """
         with sync_playwright() as p:
-            logger.info("Starting Chromium (headless=%s)...", self.headless)
+            print("\nStarting Chromium...")
             browser = p.chromium.launch(headless=self.headless)
 
             try:
@@ -567,7 +570,7 @@ class DevBgScraper:
                 page = context.new_page()
 
                 job_urls = self.discover_job_urls(page, start_url)
-                logger.info("Discovered %d jobs.", len(job_urls))
+                print(f"\nDiscovered {len(job_urls)} jobs.")
 
                 scraped_jobs: List[Job] = []
 
@@ -582,12 +585,8 @@ class DevBgScraper:
                             except TypeError:
                                 database.save_job(job.to_dict())
 
-                        logger.info(
-                            "[SAVED %d/%d] %s (%s)",
-                            number,
-                            len(job_urls),
-                            job.title,
-                            job.company,
+                        print(
+                            f"[SAVED {number}/{len(job_urls)}] {job.title}"
                         )
                     except Exception as error:
                         logger.error("[ERROR] Failed to scrape %s: %s", url, error)
