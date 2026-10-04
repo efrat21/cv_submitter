@@ -8,17 +8,10 @@ SKILL_ALIASES = {
     "Python": ["python"],
     "FastAPI": ["fastapi"],
     "Machine Learning": [
-        "machine learning",
-        "machine-learning",
-        "ml models",
-        "ml pipeline",
+        "machine learning", "ml pipeline", "ml models",
     ],
     "Deep Learning": [
-        "deep learning",
-        "cnn",
-        "lstm",
-        "gru",
-        "autoencoder",
+        "deep learning", "cnn", "lstm", "gru", "autoencoder",
     ],
     "PyTorch": ["pytorch"],
     "TensorFlow": ["tensorflow"],
@@ -26,65 +19,31 @@ SKILL_ALIASES = {
     "Pandas": ["pandas"],
     "NumPy": ["numpy"],
     "Data Analysis": [
-        "data analysis",
-        "data analytics",
-        "data cleaning",
-        "feature engineering",
+        "data analysis", "data analytics",
+        "data cleaning", "feature engineering",
     ],
     "Statistics": ["statistics", "statistical modeling"],
     "Signal Processing": ["signal processing"],
-    "RAG": [
-        "retrieval-augmented generation",
-        "rag-based",
-    ],
-    "LLMs": [
-        "large language model",
-        "llm",
-        "chatgpt",
-        "gemini",
-    ],
-    "AI Agents": [
-        "ai agents",
-        "agentic ai",
-        "autonomous agents",
-    ],
-    "MCP": [
-        "model context protocol",
-        "mcp",
-    ],
+    "RAG": ["retrieval-augmented generation", "rag-based"],
+    "LLMs": ["large language model", "llm", "chatgpt", "gemini"],
+    "AI Agents": ["ai agents", "agentic ai", "autonomous agents"],
+    "MCP": ["model context protocol", "mcp"],
     "GitHub Copilot": ["github copilot"],
-    "Azure": [
-        "azure",
-        "document intelligence",
-    ],
+    "Azure": ["azure", "document intelligence"],
     "Docker": ["docker"],
     "Redis": ["redis"],
     "MongoDB": ["mongodb"],
-    "SQL": [
-        "sql",
-        "relational data infrastructure",
-    ],
-    "REST APIs": [
-        "rest api",
-        "backend services",
-        "fastapi",
-    ],
+    "SQL": ["sql", "relational data infrastructure"],
+    "REST APIs": ["rest api", "backend services", "fastapi"],
     "Project Management": [
-        "project management",
-        "project controls",
-        "roadmap planning",
+        "project management", "project controls", "roadmap planning",
     ],
     "Technical Leadership": [
-        "technical project management",
-        "multidisciplinary",
-        "team productivity",
-        "mentored a team",
+        "technical project management", "multidisciplinary",
+        "team productivity", "mentored a team",
     ],
     "Research and Development": [
-        "r&d",
-        "research",
-        "feasibility analysis",
-        "algorithm development",
+        "r&d", "research", "feasibility analysis", "algorithm development",
     ],
     "Jira": ["jira"],
     "Power BI": ["power bi"],
@@ -97,64 +56,55 @@ SKILL_ALIASES = {
 }
 
 
-LEARNING_MARKERS = [
-    "independent learning",
-    "course",
-    "specialization",
-    "challenge",
-    "summer school",
-    "learning",
-]
+def detect_section(line):
+    text = line.strip().lower()
 
-PROJECT_MARKERS = [
-    "project",
-    "podcast",
-    "chatbot",
-    "microservice",
-    "pipeline",
-]
+    # Employer headings start a professional-experience section.
+    if "tensor technologies" in text:
+        return "professional"
+
+    if "rafael advanced defense systems" in text:
+        return "professional"
+
+    if text == "selected projects:":
+        return "professional_project"
+
+    if text.rstrip(":") in {
+        "technical project management",
+        "cross-functional & stakeholder leadership",
+        "technical credibility",
+    }:
+        return "professional"
+
+    if text.startswith("independent learning"):
+        return "learning"
+
+    if text == "education":
+        return "education"
+
+    if (
+        "technion - israel institute of technology" in text
+        or "imperial college london" in text
+        or "she codes" in text
+    ):
+        return "education"
+
+    return None
 
 
-def classify_evidence(line):
-    """Classify the context of a CV line, not the skill level."""
-
-    text = line.lower()
-
-    if any(marker in text for marker in LEARNING_MARKERS):
-        return "learning_or_course"
-
-    if any(marker in text for marker in PROJECT_MARKERS):
-        return "project"
-
-    return "professional_or_other"
-
-
-def parse_cv(cv_path):
-    path = Path(cv_path)
-
-    if not path.exists():
-        raise FileNotFoundError(
-            f"CV file not found: {path}"
-        )
-
-    text = path.read_text(
-        encoding="utf-8-sig"
-    )
-
-    lines = [
-        line.strip()
-        for line in text.splitlines()
-        if line.strip()
-    ]
-
+def find_skill_evidence(lines):
     skills = {}
+    current_section = "other"
 
-    for skill, aliases in SKILL_ALIASES.items():
-        evidence = []
+    for line in lines:
+        section = detect_section(line)
 
-        for line in lines:
-            lower_line = line.lower()
+        if section:
+            current_section = section
 
+        lower_line = line.lower()
+
+        for skill, aliases in SKILL_ALIASES.items():
             found = any(
                 re.search(
                     r"(?<!\w)"
@@ -166,66 +116,89 @@ def parse_cv(cv_path):
             )
 
             if found:
-                evidence.append({
+                evidence = {
                     "text": line[:500],
-                    "context": classify_evidence(line),
-                })
+                    "context": current_section,
+                }
 
-        if evidence:
-            skills[skill] = evidence
+                skills.setdefault(skill, []).append(evidence)
 
-    profile = {
+    # Remove duplicate evidence entries for the same skill.
+    for skill, items in skills.items():
+        unique = []
+        seen = set()
+
+        for item in items:
+            key = (item["text"], item["context"])
+
+            if key not in seen:
+                seen.add(key)
+                unique.append(item)
+
+        skills[skill] = unique
+
+    return skills
+
+
+def parse_cv(cv_path):
+    path = Path(cv_path)
+
+    if not path.exists():
+        raise FileNotFoundError(f"CV file not found: {path}")
+
+    text = path.read_text(encoding="utf-8-sig")
+
+    lines = [
+        line.strip()
+        for line in text.splitlines()
+        if line.strip()
+    ]
+
+    return {
         "source_file": str(path),
-        "skills": skills,
-        "experience_summary": [
-            "AI Developer at Tensor Technologies, "
-            "July 2023 to present, according to the CV.",
-            "Physicist at Rafael Advanced Defense Systems, "
-            "August 2008 to July 2023, according to the CV.",
+        "skills": find_skill_evidence(lines),
+        "professional_experience": [
+            {
+                "company": "Tensor Technologies",
+                "role": "AI Developer",
+                "period": "Jul 2023 - Present",
+            },
+            {
+                "company": "Rafael Advanced Defense Systems",
+                "role": "Physicist",
+                "period": "Aug 2008 - Jul 2023",
+            },
         ],
-        "important_limitations": [
-            "Keyword presence does not prove proficiency.",
-            "Learning and course mentions are not professional "
-            "work experience.",
-            "Years of experience in a specific technology "
-            "must be verified separately.",
+        "education": [
+            "Technion - Israel Institute of Technology",
+            "Imperial College London",
+            "She Codes",
+        ],
+        "limitations": [
+            "Skill presence does not automatically establish proficiency.",
+            "Professional experience, projects, and learning are distinct.",
+            "Years of experience must be verified against actual requirements.",
         ],
     }
-
-    return profile
 
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Parse a CV into a structured profile."
+        description="Parse CV into a structured candidate profile."
     )
-
-    parser.add_argument(
-        "--cv",
-        default="data/cv.txt",
-    )
-
+    parser.add_argument("--cv", default="data/cv.txt")
     parser.add_argument(
         "--output",
         default="data/candidate_profile.json",
     )
-
     args = parser.parse_args()
 
     profile = parse_cv(args.cv)
-
     output_path = Path(args.output)
-    output_path.parent.mkdir(
-        parents=True,
-        exist_ok=True,
-    )
+    output_path.parent.mkdir(parents=True, exist_ok=True)
 
     output_path.write_text(
-        json.dumps(
-            profile,
-            indent=2,
-            ensure_ascii=False,
-        ),
+        json.dumps(profile, indent=2, ensure_ascii=False),
         encoding="utf-8",
     )
 
@@ -233,15 +206,8 @@ def main():
     print(f"Skills detected: {len(profile['skills'])}")
 
     for skill, evidence in profile["skills"].items():
-        contexts = sorted({
-            item["context"]
-            for item in evidence
-        })
-
-        print(
-            f"- {skill}: "
-            f"{', '.join(contexts)}"
-        )
+        contexts = sorted({item["context"] for item in evidence})
+        print(f"- {skill}: {', '.join(contexts)}")
 
 
 if __name__ == "__main__":
