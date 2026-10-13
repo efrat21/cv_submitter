@@ -115,8 +115,6 @@ class CandidatePreferences:
     def from_dict(cls, data: Dict[str, Any]) -> "CandidatePreferences":
         raw = data.get("candidate") if isinstance(data.get("candidate"), dict) else data
         max_years = raw.get("max_required_years")
-        if max_years is None and raw.get("minimum_experience") is not None:
-            max_years = raw.get("minimum_experience")
 
         work_models = list(raw.get("work_models") or [])
         if not work_models and isinstance(raw.get("preferences"), dict):

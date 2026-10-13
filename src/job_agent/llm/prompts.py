@@ -25,7 +25,10 @@ candidate's rules being checked afterwards, so be honest and precise.
    good = within range; stretch = slightly above but plausible;
    too_senior = clearly above; too_junior = clearly below.
 3. LOCATION / WORK MODE - Compare with preferences.
-   Remote jobs fit if remote is acceptable. If the posting doesn't say, use "uncertain".
+   DEV.BG is based in Bulgaria (EU). Locations like "София" / "Sofia", "Пловдив" / "Plovdiv", "Варна" / "Varna"
+   are in Bulgaria and within the EU. If the candidate prefers Bulgaria or EU, these locations are a "good" match.
+   If the candidate accepts "hybrid" or "remote" and the job offers them, work model is a "good" match.
+   Only use "uncertain" if the posting truly does not state location or work model.
 4. SKILLS - Separate MUST-HAVE (stated as required) from NICE-TO-HAVE.
    A skill is a CRITICAL missing skill only if it is must-have AND the profile
    has no adjacent skill that realistically covers it.

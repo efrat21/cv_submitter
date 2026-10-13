@@ -293,6 +293,7 @@ def assess_job(job, profile):
         "url": job["url"],
         "location": job["location"],
         "work_model": job["work_model"],
+        "description": description,
         "match_score": score,
         "recommendation": recommendation,
         "core_assessment": core_results,
