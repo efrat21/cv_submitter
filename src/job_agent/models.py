@@ -312,3 +312,18 @@ class FinalDecision:
 
     def to_dict(self) -> Dict[str, Any]:
         return asdict(self)
+
+
+# -------------------------------------------------------- cover letter
+@dataclass
+class CoverLetter:
+    job_url: str
+    title: str
+    company: str
+    subject_line: str
+    content: str
+    file_path: str = ""
+    created_at: str = ""
+
+    def to_dict(self) -> Dict[str, Any]:
+        return asdict(self)
