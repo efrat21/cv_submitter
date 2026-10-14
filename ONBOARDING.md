@@ -215,8 +215,8 @@ Outputs:
 | [`src/job_agent/llm/prompts.py`](file:///d:/cv_submitter/src/job_agent/llm/prompts.py) | System prompt with structured COT guidance & prompt builder | Needs `to_dict` fix |
 | [`src/job_agent/llm/decision_agent.py`](file:///d:/cv_submitter/src/job_agent/llm/decision_agent.py) | Ollama client, schema validation, retry loop, Python guardrails | Implemented |
 | [`src/job_agent/llm/run_decisions.py`](file:///d:/cv_submitter/src/job_agent/llm/run_decisions.py) | Batch runner iterating over matches and writing CSV/JSON | Implemented |
-| [`src/job_agent/llm/cover_letter.py`](file:///d:/cv_submitter/src/job_agent/llm/cover_letter.py) | Cover letter generator | Stub (0 bytes) |
-| [`src/job_agent/devbg/application.py`](file:///d:/cv_submitter/src/job_agent/devbg/application.py) | Automated application submission via Playwright | Stub (0 bytes) |
+| [`src/job_agent/llm/cover_letter.py`](file:///d:/cv_submitter/src/job_agent/llm/cover_letter.py) | Cover letter generator | complite with prompt |
+| [`src/job_agent/devbg/application.py`](file:///d:/cv_submitter/src/job_agent/devbg/application.py) | Automated application submission via Playwright | in progress - open and fill form, but dont use the database |
 | [`src/job_agent/dashboards/dashboard.py`](file:///d:/cv_submitter/src/job_agent/dashboards/dashboard.py) | Analytics visualization | Stub (0 bytes) |
 
 ---
