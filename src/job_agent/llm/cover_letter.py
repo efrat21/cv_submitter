@@ -22,20 +22,16 @@ log = logging.getLogger(__name__)
 COVER_LETTER_SCHEMA: Dict[str, Any] = {
     "type": "object",
     "properties": {
-        "subject_line": {"type": "string"},
         "salutation": {"type": "string"},
         "hook": {"type": "string"},
         "technical_alignment": {"type": "string"},
-        "collaboration_and_location": {"type": "string"},
         "call_to_action": {"type": "string"},
         "full_letter": {"type": "string"},
     },
     "required": [
-        "subject_line",
         "salutation",
         "hook",
         "technical_alignment",
-        "collaboration_and_location",
         "call_to_action",
         "full_letter",
     ],
@@ -54,7 +50,7 @@ Write a short, human cover letter for the specific job decriptio based on user C
 - Structure:
   1. Hook & Introduction: Clearly name the target position and company. State direct alignment with the team's core technical focus.
   2. Technical Fit & Evidence: Highlight 1-2 real projects from the candidate's background that directly address challenges/technologies stated in the job description.
-  3. Call to Action & Sign-off: Professional closing inviting a conversation. Express enthusiasm for the opportunity without sounding desperate or overly formal."
+  3. Call to Action & Sign-off: Professional closing inviting a conversation. dont add "[Attachment: CV of <candidate_name>]" at the end.
 
 # OUTPUT
 Return ONLY valid JSON matching the schema provided.
@@ -133,7 +129,7 @@ class CoverLetterAgent:
         candidate_name: str = "",
         decision_context: Optional[FinalDecision] = None,
         save_path: str = ""
-    ) -> CoverLetter:
+    ):
         """Call Ollama and return a populated CoverLetter instance."""
         prompt = self.build_prompt(profile, job, candidate_name, decision_context)
 
@@ -151,25 +147,11 @@ class CoverLetterAgent:
 
         content = response["message"]["content"]
         data = json.loads(content)
-
-        full_letter = data.get("full_letter", "").strip()
-        subject_line = data.get("subject_line", f"Application for {job.title} - {candidate_name}").strip()
-
-        now_iso = datetime.now(timezone.utc).isoformat()
-
         # save cover letter
         if save_path:
             save_path = Path(save_path)
             save_path.parent.mkdir(parents=True, exist_ok=True)
-            cover_letter = CoverLetter(
-                job_url=job.url,
-                title=job.title,
-                company=job.company,
-                subject_line=subject_line,
-                content=full_letter,
-                created_at=now_iso,
-            )
-            save_path.write_text(cover_letter.to_json(indent=2), encoding="utf-8")
+            save_path.write_text(data["full_letter"], encoding="utf-8")
 
 
 def main() -> None:

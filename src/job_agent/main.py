@@ -19,7 +19,7 @@ try:
     from job_agent.devbg.application import run as run_browser_application
     from job_agent.llm.evaluator import assess_job
     from job_agent.llm.decision_agent import DecisionAgent
-    from job_agent.llm.cover_letter import CoverLetterAgent
+    from job_agent.llm.cover_letter import CoverLetterAgent, slugify
     from job_agent.models import (CandidatePreferences, CandidateProfile, CoverLetter, Job, LLMDecision, MatchResult,
     )
 except ImportError:
@@ -128,7 +128,7 @@ async def process_batch(
             
             # Run LLM Decision Agent
             decision = decision_agent.decide(profile, prefs, match_result)
-
+            print("[info] evalation finished with decision: ", decision.decision)
             cover_letter_path = ""
             if decision.decision == "APPLY":
                 # Save markdown file
@@ -136,13 +136,15 @@ async def process_batch(
                 file_name = f"{slug}.md"
                 cover_letter_path = cover_letters_dir / file_name
                 # Generate tailored cover letter
-                CoverLetterAgent.generate(profile, job, candidate_name=candidate_name, decision_context=decision, save_path=cover_letter_path)
+                cover_letter_agent = CoverLetterAgent(model=args.model)
+                cover_letter_agent.generate(profile=profile, job=job, candidate_name=args.name, decision_context=decision, save_path=cover_letter_path)
 
             evaluated_batch.append({
                 "job": job,
                 "decision": decision,
                 "cover_letter_path": cover_letter_path
             })
+            print(f"[INFO] Cover letter saved to: {cover_letter_path}")
 
     print("\n========================================")
     print("STEP 3: Human Supervision & Applications...")
@@ -233,7 +235,7 @@ def main():
     parser.add_argument("--preferences", default="data/candidate_preferences.json", help="Candidate preferences JSON")
     parser.add_argument("--cv", default="data/cv.pdf", help="Path to candidate CV PDF/DOCX")
     parser.add_argument("--email", default="", help="Candidate email for application forms")
-    parser.add_argument("--phone", default="", help="Candidate phone number")
+    parser.add_argument("--name", default="", help="Candidate full name")
     parser.add_argument("--model", default="qwen2.5:7b", help="Ollama model name")
     parser.add_argument("--min-confidence", type=int, default=70, help="Minimum confidence threshold")
     parser.add_argument("--headless", action="store_true", default=False, help="Run scraper in headless mode")
