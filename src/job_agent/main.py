@@ -146,6 +146,14 @@ async def process_batch(
             })
             print(f"[INFO] Cover letter saved to: {cover_letter_path}")
 
+        # Record jobs that were evaluated but not recommended.
+        for item in evaluated_batch:
+            if item["decision"].decision != "APPLY":
+                job = item["job"]
+                db.record_action(job.url, "NOT_RECOMMENDED")
+            else:
+                db.record_action(job.url, "RECOMMENDED")
+
     print("\n========================================")
     print("STEP 3: Human Supervision & Applications...")
     print("========================================")
@@ -159,68 +167,51 @@ async def process_batch(
             if item["decision"].decision == "APPLY"
         ]
 
-        # Record jobs that were evaluated but not recommended.
-        for item in evaluated_batch:
-            if item["decision"].decision != "APPLY":
-                job = item["job"]
-                db.record_action(job.url, "NOT_RECOMMENDED")
-
         if not apply_items:
             print("[INFO] No jobs recommended for application in this batch.")
             return True
         else:
             print(f"[INFO] {len(apply_items)} jobs recommended for application. Launching browser review...\n")
-
             for idx, item in enumerate(apply_items, 1):
                 job: Job = item["job"]
-                cover_letter: CoverLetter | None = item["cover_letter"]
-            print(f"--- Job {idx}/{len(apply_items)}: {job.title} at {job.company} ---")
-            cover_letter_content = (
-                cover_letter.content
-                if cover_letter and hasattr(cover_letter, "content")
-                else (
-                    item.get("cover_letter_path")
-                    if item.get("cover_letter_path")
-                    else ""
+                cover_letter_path: Path | None = item["cover_letter_path"]
+                print(f"--- Job {idx}/{len(apply_items)}: {job.title} at {job.company} ---")
+
+                # Prepare arguments for application.py runner
+                app_ns = argparse.Namespace(
+                    url=job.url,
+                    name=args.name,
+                    email=args.email,
+                    cv=args.cv,
+                    cover_letter_file=str(cover_letter_path) if cover_letter_path else None,
+                    open_apply=True,
+                    headed=True
                 )
-            )
 
-            # Prepare arguments for application.py runner
-            app_ns = argparse.Namespace(
-                url=job.url,
-                name=profile.name,
-                email=getattr(args, "email", "candidate@example.com"),
-                phone=getattr(args, "phone", None),
-                cv=args.cv,
-                cover_letter_file=cover_letter_content,
-                open_apply=True,
-                headed=True
-            )
+                # Open browser, prefill, and wait for human review/action
+                try:
+                    await run_browser_application(app_ns)
+                except Exception as exc:
+                    print(f"[ERROR] Browser automation error: {exc}")
 
-            # Open browser, prefill, and wait for human review/action
-            try:
-                await run_browser_application(app_ns)
-            except Exception as exc:
-                print(f"[ERROR] Browser automation error: {exc}")
+                # Simple terminal prompt interface
+                while True:
+                    choice = input("Action [a]pply / [s]kip / [q]uit: ").strip().lower()
+                    if choice in ("a", "apply"):
+                        action_status = "APPLIED"
+                        break
+                    elif choice in ("s", "skip"):
+                        action_status = "SKIPPED"
+                        break
+                    elif choice in ("q", "quit"):
+                        print("[INFO] Exiting agent session.")
+                        return False
+                    else:
+                        print("Invalid input. Please enter 'a' (apply), 's' (skip), or 'q' (quit).")
 
-            # Simple terminal prompt interface
-            while True:
-                choice = input("Action [a]pply / [s]kip / [q]uit: ").strip().lower()
-                if choice in ("a", "apply"):
-                    action_status = "APPLIED"
-                    break
-                elif choice in ("s", "skip"):
-                    action_status = "SKIPPED"
-                    break
-                elif choice in ("q", "quit"):
-                    print("[INFO] Exiting agent session.")
-                    return False
-                else:
-                    print("Invalid input. Please enter 'a' (apply), 's' (skip), or 'q' (quit).")
-
-            # Save action to DB
-            db.record_action(job["url"], action_status)
-            print(f"[RECORDED] Job status saved as: {action_status}\n")
+                # Save action to DB
+                db.record_action(job.url, action_status)
+                print(f"[RECORDED] Job status saved as: {action_status}\n")
 
     return True
 

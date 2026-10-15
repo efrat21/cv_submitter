@@ -145,29 +145,6 @@ async def safe_fill(page: Page, label: str, pattern: re.Pattern[str], value: str
     except Exception as exc:
         print(f"[SKIPPED] {label}: {type(exc).__name__}: {exc}")
 
-
-async def maybe_open_application_form(page: Page) -> None:
-    """Click only a clearly labelled Apply control; never a submit control."""
-    try:
-        candidates = page.get_by_role("link", name=APPLY_BUTTON_NAMES)
-        target = await first_visible(candidates)
-        if target is None:
-            candidates = page.get_by_role("button", name=APPLY_BUTTON_NAMES)
-            target = await first_visible(candidates)
-        if target is None:
-            print("[INFO] No clearly labelled Apply control found; staying on current page.")
-            return
-
-        print("[INFO] Opening the application form...")
-        async with page.expect_navigation(wait_until="domcontentloaded", timeout=7000):
-            await target.click()
-    except PlaywrightTimeoutError:
-        # Some sites update the page or open a new tab without a full navigation.
-        await page.wait_for_timeout(1200)
-    except Exception as exc:
-        print(f"[INFO] Could not automatically open application form: {type(exc).__name__}: {exc}")
-
-
 async def upload_cv(page: Page, cv_path: Path | None) -> bool:
     if cv_path is None:
         return False
@@ -193,6 +170,124 @@ async def upload_cv(page: Page, cv_path: Path | None) -> bool:
         print(f"[SKIPPED] CV upload: {type(exc).__name__}: {exc}")
     return False
 
+POPUP_CLOSE_SELECTORS = [
+    '[aria-label="Close" i]',
+    '[aria-label="Затвори" i]',
+    "button.close",
+    ".modal .close",
+    '[class*="popup"] [class*="close"]',
+    '[class*="modal"] [class*="close"]',
+    "button:has-text('×')",
+    "button:has-text('Close')",
+    "button:has-text('Затвори')",
+]
+
+COOKIE_ACCEPT_SELECTORS = [
+    '[data-cky-tag="accept-button"]',   # CookieYes (dev.bg)
+    "button.cky-btn-accept",
+]
+
+
+async def accept_cookies(page: Page) -> bool:
+    for selector in COOKIE_ACCEPT_SELECTORS:
+        btn = page.locator(selector).first
+        try:
+            if await btn.is_visible():
+                await btn.click(timeout=2000)
+                await page.locator(".cky-consent-container").wait_for(
+                    state="hidden", timeout=3000
+                )
+                print("[INFO] Cookie banner accepted.")
+                return True
+        except Exception:
+            pass
+    return False
+
+# Something that only exists in the REAL application form (CV upload is a good marker).
+# Adjust after inspecting the dev.bg form.
+FORM_MARKER = "input[type=file], form textarea"
+
+
+async def dismiss_popups(page: Page) -> int:
+    closed = 1 if await accept_cookies(page) else 0
+    for selector in POPUP_CLOSE_SELECTORS:
+        loc = page.locator(selector)
+        for i in range(await loc.count()):
+            el = loc.nth(i)
+            try:
+                if await el.is_visible():
+                    await el.click(timeout=1000)
+                    closed += 1
+                    await page.wait_for_timeout(300)
+            except Exception:
+                pass
+    await page.keyboard.press("Escape")
+    return closed
+
+
+async def application_form_visible(page: Page, timeout: int = 4000) -> bool:
+    try:
+        await page.locator(FORM_MARKER).first.wait_for(state="visible", timeout=timeout)
+        return True
+    except PlaywrightTimeoutError:
+        return False
+        
+
+
+async def maybe_open_application_form(page: Page) -> Optional[Page]:
+    """Returns the page containing a visible application form, or None if it couldn't be opened."""
+    for attempt in range(1, 4):
+        n = await dismiss_popups(page)
+        if n:
+            print(f"[INFO] Closed {n} popup(s) before clicking.")
+
+        target = None
+        for role in ("link", "button"):
+            target = await first_visible(page.get_by_role(role, name=APPLY_BUTTON_NAMES))
+            if target is not None:
+                break
+        if target is None:
+            print("[INFO] No clearly labelled Apply control found.")
+            return None
+
+        pages_before = set(page.context.pages)
+        url_before = page.url
+        print(f"[INFO] Opening the application form (attempt {attempt})...")
+
+        try:
+            await target.scroll_into_view_if_needed()
+            await target.click(timeout=3000)
+        except PlaywrightTimeoutError:
+            print("[WARN] Click blocked, closing popups and retrying...")
+            await dismiss_popups(page)
+            try:
+                # Last resort: dispatch the click in JS, bypassing the overlay
+                await target.evaluate("e => e.click()")
+            except Exception as exc:
+                print(f"[WARN] JS click failed: {type(exc).__name__}: {exc}")
+                continue
+        except Exception as exc:
+            print(f"[WARN] Click failed: {type(exc).__name__}: {exc}")
+            continue
+
+        await page.wait_for_timeout(1000)
+
+        # New tab?
+        new_pages = [p for p in page.context.pages if p not in pages_before]
+        if new_pages:
+            page = new_pages[-1]
+            await page.wait_for_load_state("domcontentloaded")
+
+        # Verify, don't assume
+        if await application_form_visible(page):
+            print(f"[INFO] Application form is open: {page.url}")
+            return page
+
+        # A popup may have appeared AFTER the click and swallowed it
+        print("[WARN] Form not visible after click.")
+
+    print("[ERROR] Could not open the application form.")
+    return None
 
 async def describe_form(page: Page) -> None:
     """Print a small inventory of visible form controls for debugging."""
@@ -263,7 +358,6 @@ async def run(args: argparse.Namespace) -> None:
         filled: list[str] = []
         await safe_fill(page, "name", FIELD_PATTERNS["name"], args.name, filled)
         await safe_fill(page, "email", FIELD_PATTERNS["email"], args.email, filled)
-        await safe_fill(page, "phone", FIELD_PATTERNS["phone"], args.phone, filled)
         await safe_fill(page, "cover letter", FIELD_PATTERNS["cover_letter"], letter, filled)
         await upload_cv(page, cv_path)
         await describe_form(page)
