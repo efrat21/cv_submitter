@@ -1,4 +1,5 @@
 """Data models (plain dataclasses, same style as Job)."""
+from __future__ import annotations
 from dataclasses import asdict, dataclass, field
 from typing import Any, Dict, List, Optional
 
@@ -153,10 +154,10 @@ class MatchResult:
     job: Job
     matched_skills: List[str] = field(default_factory=list)
     missing_skills: List[str] = field(default_factory=list)
-    title_keyword_hits: List[str] = field(default_factory=list)
     detected_seniority: str = ""
     required_years: Optional[float] = None
     prefilter_score: Optional[int] = None  # 0-100, advisory only
+    verification_flags: List[str] = field(default_factory=list)
 
     def to_dict(self) -> Dict[str, Any]:
         return asdict(self)  # recurses into the nested Job

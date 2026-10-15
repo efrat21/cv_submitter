@@ -3,6 +3,7 @@ import json
 import re
 import sqlite3
 from pathlib import Path
+from job_agent.models import Job, CandidateProfile, MatchResult
 
 
 # These are preliminary rules, not extracted job requirements.
@@ -99,8 +100,17 @@ def load_profile(path):
 
 def get_evidence(profile, skill):
     """Support the current structured evidence and older profile formats."""
-    items = profile.get("skills", {}).get(skill, [])
+    # Extract the skills value safely
+    skills_data = profile.get("skills", {}) if isinstance(profile, dict) else getattr(profile, "skills", [])
 
+    # Handle when skills_data is a list vs a dict
+    if isinstance(skills_data, dict):
+        items = skills_data.get(skill, [])
+    elif isinstance(skills_data, list):
+        # If the skill exists in the list, return a truthy list representation
+        items = [skill] if skill in skills_data else []
+    else:
+        items = []
     if not isinstance(items, list):
         return []
 
@@ -168,9 +178,9 @@ def extract_year_requirements(description):
     return sorted(set(values))
 
 
-def assess_job(job, profile):
-    title = job["title"]
-    description = job.get("description") or ""
+def assess_job(job: Job, profile: CandidateProfile) -> MatchResult:
+    title = job.title
+    description = job.description or ""
     description_lower = description.lower()
     rules = get_role_rules(title)
 
@@ -264,6 +274,9 @@ def assess_job(job, profile):
         verification_flags.append(
             "Check seniority, scope, and role-specific responsibilities."
         )
+        detected_seniority = True
+    else:
+        detected_seniority = False
 
     for skill in CHECK_SKILLS:
         if (
@@ -286,34 +299,46 @@ def assess_job(job, profile):
         if phrase in description_lower:
             requirement_signals.append(phrase)
 
-    return {
-        "id": job["id"],
-        "title": title,
-        "company": job["company"],
-        "url": job["url"],
-        "location": job["location"],
-        "work_model": job["work_model"],
-        "description": description,
-        "match_score": score,
-        "recommendation": recommendation,
-        "core_assessment": core_results,
-        "related_assessment": related_results,
-        "core_missing": missing_core,
-        "related_missing": missing_related,
-        "evidence": evidence_summary,
-        "verification_flags": verification_flags,
-        "description_signals": requirement_signals,
-        "scoring_method": {
-            "core_skill_weight": 2,
-            "related_skill_weight": 1,
-            "evidence_weights": CONTEXT_WEIGHTS,
-            "warning": (
-                "Preliminary rule-based score. It is not a probability "
-                "of getting an interview and does not replace review "
-                "of mandatory requirements."
-            ),
-        },
-    }
+    match_result = MatchResult(
+        job=job,
+        matched_skills=core_results + related_results,
+        missing_skills=missing_core + missing_related,
+        prefilter_score=score,
+        verification_flags=verification_flags,
+        detected_seniority=detected_seniority,
+        required_years=years,
+    )
+
+    return match_result
+
+    # return {
+    #     # "id": job.id,
+    #     "title": title,
+    #     "company": job.company,
+    #     "url": job.url,
+    #     "location": job.location,
+    #     "work_model": job.work_model,
+    #     "description": description,
+    #     "match_score": score,
+    #     "recommendation": recommendation,
+    #     "core_assessment": core_results,
+    #     "related_assessment": related_results,
+    #     "core_missing": missing_core,
+    #     "related_missing": missing_related,
+    #     "evidence": evidence_summary,
+    #     "verification_flags": verification_flags,
+    #     "description_signals": requirement_signals,
+    #     "scoring_method": {
+    #         "core_skill_weight": 2,
+    #         "related_skill_weight": 1,
+    #         "evidence_weights": CONTEXT_WEIGHTS,
+    #         "warning": (
+    #             "Preliminary rule-based score. It is not a probability "
+    #             "of getting an interview and does not replace review "
+    #             "of mandatory requirements."
+    #         ),
+    #     },
+    # }
 
 
 def main():

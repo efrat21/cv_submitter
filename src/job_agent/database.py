@@ -39,7 +39,7 @@ class JobDatabase:
     def __init__(self, path: Union[str, Path] = "data/jobs.db"):
         self.path = Path(path)
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        self.connection = sqlite3.connect(self.path)
+        self.connection = sqlite3.connect(self.path, check_same_thread=False)
         self.connection.executescript(SCHEMA)
         self.connection.commit()
 

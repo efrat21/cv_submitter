@@ -132,6 +132,7 @@ class CoverLetterAgent:
         job: Job,
         candidate_name: str = "",
         decision_context: Optional[FinalDecision] = None,
+        save_path: str = ""
     ) -> CoverLetter:
         """Call Ollama and return a populated CoverLetter instance."""
         prompt = self.build_prompt(profile, job, candidate_name, decision_context)
@@ -156,14 +157,19 @@ class CoverLetterAgent:
 
         now_iso = datetime.now(timezone.utc).isoformat()
 
-        return CoverLetter(
-            job_url=job.url,
-            title=job.title,
-            company=job.company,
-            subject_line=subject_line,
-            content=full_letter,
-            created_at=now_iso,
-        )
+        # save cover letter
+        if save_path:
+            save_path = Path(save_path)
+            save_path.parent.mkdir(parents=True, exist_ok=True)
+            cover_letter = CoverLetter(
+                job_url=job.url,
+                title=job.title,
+                company=job.company,
+                subject_line=subject_line,
+                content=full_letter,
+                created_at=now_iso,
+            )
+            save_path.write_text(cover_letter.to_json(indent=2), encoding="utf-8")
 
 
 def main() -> None:
