@@ -3,7 +3,7 @@
 Generates concise, evidence-backed cover letters matching a candidate's verified
 skills and projects to target job postings.
 """
-
+import time
 import argparse
 from datetime import datetime, timezone
 import json
@@ -36,25 +36,31 @@ COVER_LETTER_SCHEMA: Dict[str, Any] = {
         "full_letter",
     ],
 }
+SYSTEM_PROMPT = """Write a concise, personalized cover letter using the candidate profile and job description.
 
-SYSTEM_PROMPT = """\
-You are an expert technical career coach and hiring specialist. The user's CV is attached in the project sources. Read it carefully to extract relevant experience, skills, and tone.
-Write a short, human cover letter for the specific job decriptio based on user CV. Follow these rules strictly:
+CRITICAL: The candidate profile is the ONLY source of facts about the candidate. The job description describes the employer's needs, NOT the candidate's experience.
 
-# CANDIDATE FACTS & CONSTRAINTS
-- Use ONLY facts provided in the <candidate_profile>. Never invent past employers, fake projects, or unlisted credentials. dont pretend that all experience years are in data science, this is a trasition candidate
+FACTUAL RULES:
+- Before mentioning any skill, technology, project, responsibility, or achievement, verify that it is explicitly supported by the candidate profile.
+- NEVER assume experience with a technology just because it appears in the job description. For example, if graph analytics or fraud detection is not explicitly documented in the profile, do not mention it as candidate experience.
+- Never invent projects, business outcomes, metrics, or claims of impact.
+- Do not turn general skills into specific project experience.
+- Accurately distinguish total career experience from AI/ML experience.
+- When a requirement is not supported, identify the closest relevant, documented transferable experience instead. Do not pretend it is equivalent experience.
 
-# LETTER REQUIREMENTS
-- Length: 250 - 350 words total across 3 to 4 clear paragraphs.
-- Tone: Confident, Write like a person, not a template. No buzzwords. No lists. Active voice and short sentences. Do not invent anything — use only what's in the provided CV. Avoid generic filler (e.g., "I am writing to express my enthusiastic interest in your esteemed company").
-- Structure:
-  1. Hook & Introduction: Clearly name the target position and company. State direct alignment with the team's core technical focus.
-  2. Technical Fit & Evidence: Highlight 1-2 real projects from the candidate's background that directly address challenges/technologies stated in the job description.
-  3. Call to Action & Sign-off: Professional closing inviting a conversation. dont add "[Attachment: CV of <candidate_name>]" at the end.
+WRITING:
+- Write 2–3 short paragraphs, under 180 words.
+- Open with the candidate's strongest verified qualification for this specific role.
+- Select 2–3 concrete examples from the profile and explain their relevance.
+- Highlight the combination of hands-on ML development and technical R&D leadership where relevant.
+- Be direct, natural, confident, and specific.
+- Avoid clichés, generic enthusiasm, buzzwords, repetition, and exaggerated claims.
+- Close with one brief invitation to discuss the opportunity.
 
-# OUTPUT
-Return ONLY valid JSON matching the schema provided.
-`full_letter` must be the complete, ready-to-send markdown text including salutation, body paragraphs, and sign-off.
+FINAL CHECK:
+Check every factual claim against the candidate profile. If you cannot point to explicit supporting information, delete or rewrite the claim. Relevance to the job is not evidence that the candidate has the experience.
+
+OUTPUT: Return ONLY valid JSON matching the supplied schema. The full_letter field must contain the complete, ready-to-send letter. Do not include commentary or extra fields.
 """
 
 
@@ -69,7 +75,7 @@ class CoverLetterAgent:
 
     def __init__(
         self,
-        model: str = "qwen2.5:7b",
+        model: str = "qwen2.5:3b",
         host: str = "http://localhost:11434",
         temperature: float = 0.3,
         num_ctx: int = 8192,
@@ -118,7 +124,7 @@ class CoverLetterAgent:
             "Generate a tailored cover letter for this application.\n\n"
             f"<candidate_profile>\n{json.dumps(profile_dict, ensure_ascii=False, indent=2)}\n</candidate_profile>\n\n"
             f"<target_job>\n{json.dumps(job_data, ensure_ascii=False, indent=2)}\n</target_job>\n\n"
-            f"<screening_context>\n{json.dumps(context_data, ensure_ascii=False, indent=2)}\n</screening_context>\n\n"
+            # f"<screening_context>\n{json.dumps(context_data, ensure_ascii=False, indent=2)}\n</screening_context>\n\n"
             "Return the JSON cover letter now."
         )
 
@@ -137,14 +143,29 @@ class CoverLetterAgent:
             {"role": "system", "content": SYSTEM_PROMPT},
             {"role": "user", "content": prompt},
         ]
+        print(
+            f"[TIMING] Cover letter started | model={self.model} "
+            f"| prompt_chars={len(prompt)} | num_ctx={self.num_ctx}",
+            flush=True,
+        )
+
+        start = time.perf_counter()
 
         response = self.client.chat(
             model=self.model,
             messages=messages,
             format=COVER_LETTER_SCHEMA,
-            options={"temperature": self.temperature, "num_ctx": self.num_ctx},
+            options={
+                "temperature": self.temperature,
+                "num_ctx": self.num_ctx,
+            },
         )
 
+        print(
+            f"[TIMING] Ollama cover-letter call completed in "
+            f"{time.perf_counter() - start:.1f}s",
+            flush=True,
+        )
         content = response["message"]["content"]
         data = json.loads(content)
         # save cover letter

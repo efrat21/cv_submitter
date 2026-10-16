@@ -4,7 +4,7 @@ Batch Workflow: Scrape 10 -> Evaluate & Cover Letter -> Browser Apply -> Human S
 """
 
 from __future__ import annotations
-
+import time
 import argparse
 import asyncio
 import json
@@ -126,9 +126,17 @@ async def process_batch(
             # Construct MatchResult via evaluator
             match_result = assess_job(job, profile)
             
-            # Run LLM Decision Agent
+            # Run LLM Decision Agent and measure elapsed time
+            print("[TIMING] Starting decision evaluation...", flush=True)
+            start = time.perf_counter()
+
             decision = decision_agent.decide(profile, prefs, match_result)
-            print("[info] evalation finished with decision: ", decision.decision)
+
+            print(
+                f"[TIMING] Decision completed in {time.perf_counter() - start:.1f}s "
+                f"(decision={decision.decision})",
+                flush=True,
+            )
             cover_letter_path = ""
             if decision.decision == "APPLY":
                 # Save markdown file

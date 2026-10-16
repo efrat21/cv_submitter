@@ -79,7 +79,7 @@ class DecisionAgent:
         min_confidence: int = 70,
         max_retries: int = 2,
         num_ctx: int = 8192,
-        temperature: float = 0.0,
+        temperature: float = 0.0
     ):
         self.client = Client(host=host)
         self.model = model
@@ -89,14 +89,46 @@ class DecisionAgent:
         self.temperature = temperature
 
     # ------------------------------------------------------------------ LLM
+
+    
     def _chat(self, messages: List[dict]) -> str:
+        import time
+
+        prompt_chars = sum(len(m.get("content", "")) for m in messages)
+
+        print(
+            f"[TIMING] Decision request starting | "
+            f"model={self.model} | "
+            f"prompt_chars={prompt_chars} | "
+            f"num_ctx={self.num_ctx} | "
+            f"messages={len(messages)}",
+            flush=True,
+        )
+
+        start = time.perf_counter()
+
         response = self.client.chat(
             model=self.model,
             messages=messages,
-            format=LLM_DECISION_SCHEMA,  # constrain output to our schema
-            options={"temperature": self.temperature, "num_ctx": self.num_ctx},
+            format=LLM_DECISION_SCHEMA,
+            options={
+                "temperature": self.temperature,
+                "num_ctx": self.num_ctx,
+            },
         )
-        return response["message"]["content"]
+
+        elapsed = time.perf_counter() - start
+        content = response["message"]["content"]
+
+        print(
+            f"[TIMING] Decision response received | "
+            f"elapsed={elapsed:.1f}s | "
+            f"response_chars={len(content)}",
+            flush=True,
+        )
+
+        return content
+
 
     def _ask_llm(self, profile, prefs, match) -> LLMDecision:
         messages = [
