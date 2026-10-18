@@ -12,24 +12,15 @@ import sqlite3
 from pathlib import Path
 from typing import Any, Dict, List
 
-try:
-    from job_agent.config import DATA_DIR
-    from job_agent.database import JobDatabase
-    from job_agent.devbg.scraper import DevBgScraper
-    from job_agent.devbg.application import run as run_browser_application
-    from job_agent.llm.evaluator import assess_job
-    from job_agent.llm.decision_agent import DecisionAgent
-    from job_agent.llm.cover_letter import CoverLetterAgent, slugify
-    from job_agent.models import (CandidatePreferences, CandidateProfile, CoverLetter, Job, LLMDecision, MatchResult,
-    )
-except ImportError:
-    from src.job_agent.database import JobDatabase
-    from src.job_agent.devbg.scraper import DevBgScraper
-    from src.job_agent.devbg.application import run as run_browser_application
-    from src.job_agent.models import CandidatePreferences, CandidateProfile, MatchResult, CoverLetter, Job, LLMDecision
-    from src.job_agent.llm.evaluator import assess_job
-    from src.job_agent.llm.decision_agent import DecisionAgent
-    from src.job_agent.llm.cover_letter import CoverLetterAgent
+from job_agent.config import DATA_DIR
+from job_agent.database import JobDatabase
+from job_agent.devbg.scraper import DevBgScraper
+from job_agent.devbg.application import run as run_browser_application
+from job_agent.llm.evaluator import assess_job
+from job_agent.llm.decision_agent import DecisionAgent
+from job_agent.llm.cover_letter import CoverLetterAgent, slugify
+from job_agent.models import (CandidatePreferences, CandidateProfile, CoverLetter, Job, LLMDecision, MatchResult,
+)
 
 
 def load_json(path: str | Path) -> Dict[str, Any]:
@@ -144,8 +135,8 @@ async def process_batch(
                 file_name = f"{slug}.md"
                 cover_letter_path = cover_letters_dir / file_name
                 # Generate tailored cover letter
-                cover_letter_agent = CoverLetterAgent(model=args.model)
-                cover_letter_agent.generate(profile=profile, job=job, candidate_name=args.name, decision_context=decision, save_path=cover_letter_path)
+                cover_letter_agent = CoverLetterAgent()
+                cover_letter_agent.run(profile=profile, job=job, candidate_name=args.name, decision_context=decision, save_path=cover_letter_path)
 
             evaluated_batch.append({
                 "job": job,

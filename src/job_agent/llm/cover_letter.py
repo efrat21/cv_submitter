@@ -13,11 +13,13 @@ import re
 import sqlite3
 from typing import Any, Dict, List, Optional
 
-from ollama import Client
-
 from ..models import CandidateProfile, CoverLetter, FinalDecision, Job
 
 log = logging.getLogger(__name__)
+from dotenv import load_dotenv
+load_dotenv()
+from google import genai
+from google.genai import types 
 
 COVER_LETTER_SCHEMA: Dict[str, Any] = {
     "type": "object",
@@ -36,7 +38,7 @@ COVER_LETTER_SCHEMA: Dict[str, Any] = {
         "full_letter",
     ],
 }
-SYSTEM_PROMPT = """Write a concise, personalized cover letter using the candidate profile and job description.
+SYSTEM_PROMPT_writer = """Write a concise, personalized cover letter using the candidate profile and job description.
 
 CRITICAL: The candidate profile is the ONLY source of facts about the candidate. The job description describes the employer's needs, NOT the candidate's experience.
 
@@ -57,30 +59,129 @@ WRITING:
 - Avoid clichés, generic enthusiasm, buzzwords, repetition, and exaggerated claims.
 - Close with one brief invitation to discuss the opportunity.
 
-FINAL CHECK:
-Check every factual claim against the candidate profile. If you cannot point to explicit supporting information, delete or rewrite the claim. Relevance to the job is not evidence that the candidate has the experience.
-
 OUTPUT: Return ONLY valid JSON matching the supplied schema. The full_letter field must contain the complete, ready-to-send letter. Do not include commentary or extra fields.
 """
 
 
+SYSTEM_PROMPT_factcheck = """Cover Letter Fact-Checking & Alignment Assistant
+
+## ROLE & OBJECTIVE
+You are an expert HR Analyst and Technical Copyeditor. Your primary task is to review a candidate's Cover Letter against their provided Profile (Resume/CV, LinkedIn summary, or bio). 
+
+You must identify and remove or modify any claims, achievements, skills, titles, or metrics in the Cover Letter that are **not supported by or derivable from** the Candidate Profile. Once verified, you will rewrite and retune the Cover Letter so it remains professional, engaging, and polished.
+
+---
+
+## INPUTS
+You will receive two pieces of text:
+1. **[CANDIDATE PROFILE]**: The ground-truth source of facts, employment history, skills, and accomplishments.
+2. **[COVER LETTER]**: The original document draft to be verified and tuned.
+
+---
+
+## VERIFICATION & AUDIT RULES
+
+1. **Strict Ground-Truth Adherence**:
+   - **Supported Claim**: A statement that directly matches facts in the Profile or is a reasonable, direct inference from them (e.g., claiming "experience in data analysis" when the Profile lists 5 years as a Data Analyst).
+   - **Unsupported Claim (Fact/Metric/Title)**: Any specific tool, degree, company name, project result, key performance indicator (KPI), percentage, or title mentioned in the Cover Letter that is missing from the Profile.
+   - **Exaggerated Claim**: Framing an individual entry-level task in the Profile as leading or directing a team.
+
+2. **Handling Unsupported Claims**:
+   - **Remove**: Erase specific metrics, dates, companies, or tools that do not exist in the Profile.
+   - **Softened Alternative**: If a statement conveys a relevant soft skill or enthusiasm that fits the candidate's general background, reframe it into a broader, factual statement without false specifics.
+
+3. **Retuning Guidelines**:
+   - Ensure seamless narrative flow after removing unsupported statements.
+   - Maintain a professional, confident, and professional tone.
+   - Fix grammar, active voice, and formatting to present the candidate in the strongest authentic light.
+   - **Do NOT invent or extrapolate** new factual details to fill gaps.
+
+---
+
+## WORKFLOW
+
+1. **Audit Phase**: Read both inputs thoroughly. List all discrepancies, unsupported claims, or exaggerations found in the Cover Letter.
+2. **Correction Phase**: Remove or modify the identified sections.
+3. **Refinement Phase**: Re-craft the sentences surrounding the edits so the Cover Letter flows naturally and maintains high narrative impact.
+
+---
+
+## OUTPUT FORMAT
+
+Always structure your response into the following two sections:
+
+### 1. Audit Summary & Discrepancy Log
+Provide a brief breakdown of what was modified or removed and why:
+* **Removed / Modified Claim**: "[Original text from Cover Letter]"
+  * **Reason**: [Explain why it is unsupported based on the Profile]
+  * **Action Taken**: [Removed completely / Reworded to match factual background]
+
+*(If no discrepancies are found, explicitly state: "All claims in the cover letter are supported by the profile.")*
+
+---
+
+### 2. Revised Cover Letter
+Provide the final, fully corrected, and retuned Cover Letter text ready for use.
+"""
 def slugify(text: str) -> str:
     """Convert text into a filesystem-safe slug."""
     text = re.sub(r"[^\w\s-]", "", text).strip().lower()
     return re.sub(r"[-\s]+", "_", text)[:50]
 
 
+class FactCheckerAgent:
+    def __init__(
+        self,
+        model: str = "gemini-3.8-flash",
+        temperature: float = 0.3,
+        num_ctx: int = 8192,
+    ):
+        self.client = genai.Client()
+        self.model = model
+        self.temperature = temperature
+        self.num_ctx = num_ctx
+
+    def check(
+        self,
+        profile: CandidateProfile,
+        cover_letter: CoverLetter,
+    ) -> bool:
+        
+        print(
+            f"[TIMING] fact-check started | model={self.model} "
+            f"| prompt_chars={len(prompt)} | num_ctx={self.num_ctx}",
+            flush=True,
+        )
+   
+        start = time.perf_counter()
+        breakpoint()
+        response = self.client.create(
+            model=self.model,
+            contents= f"Profile:\n{profile}\n\nCover Letter:\n{cover_letter}",
+            format=COVER_LETTER_SCHEMA,
+            config=types.GenerateContentConfig(
+                system_instruction=SYSTEM_PROMPT_factcheck,
+                temperature=self.temperature,
+            ),
+        )
+        print(
+            f"[TIMING] fact-check call completed in "
+            f"{time.perf_counter() - start:.1f}s",
+            flush=True,
+        )
+        content = strip_cover_letter(response.text)
+        return content
+
 class CoverLetterAgent:
     """Agent that produces role-specific cover letters using local Ollama."""
 
     def __init__(
         self,
-        model: str = "qwen2.5:3b",
-        host: str = "http://localhost:11434",
+        model: str = "gemini-3.8-flash",
         temperature: float = 0.3,
         num_ctx: int = 8192,
     ):
-        self.client = Client(host=host)
+        self.client = genai.Client()
         self.model = model
         self.temperature = temperature
         self.num_ctx = num_ctx
@@ -130,49 +231,77 @@ class CoverLetterAgent:
 
     def generate(
         self,
-        profile: CandidateProfile,
-        job: Job,
-        candidate_name: str = "",
-        decision_context: Optional[FinalDecision] = None,
-        save_path: str = ""
+        prompt: str,
     ):
-        """Call Ollama and return a populated CoverLetter instance."""
-        prompt = self.build_prompt(profile, job, candidate_name, decision_context)
+        """Call LLM (LLama or Gemini) and return a populated CoverLetter instance."""
 
-        messages = [
-            {"role": "system", "content": SYSTEM_PROMPT},
-            {"role": "user", "content": prompt},
-        ]
         print(
             f"[TIMING] Cover letter started | model={self.model} "
             f"| prompt_chars={len(prompt)} | num_ctx={self.num_ctx}",
             flush=True,
         )
-
         start = time.perf_counter()
 
-        response = self.client.chat(
+        interaction = self.client.models.generate_content(
             model=self.model,
-            messages=messages,
-            format=COVER_LETTER_SCHEMA,
-            options={
-                "temperature": self.temperature,
-                "num_ctx": self.num_ctx,
-            },
+            contents=prompt,
+            config=types.GenerateContentConfig(
+            system_instruction=SYSTEM_PROMPT_writer,
+            temperature=self.temperature,
+            ),
         )
 
         print(
-            f"[TIMING] Ollama cover-letter call completed in "
+            f"[TIMING] cover-letter call completed in "
             f"{time.perf_counter() - start:.1f}s",
             flush=True,
         )
-        content = response["message"]["content"]
-        data = json.loads(content)
+        content = strip_cover_letter(interaction)
+        return content
+
+    def run(
+        self,
+        profile: CandidateProfile,
+        job: Job,
+        candidate_name: str = "",
+        decision_context: Optional[FinalDecision] = None,
+        save_path: str = "",
+        use_factchecker: bool = False
+    ):
+        # Build the prompt for the cover letter
+        prompt = self.build_prompt(profile, job, candidate_name, decision_context)
+        # Generate the precheck cover letter
+        precheck_cover_letter = self.generate(prompt)
+        if use_factchecker:
+            # Fact-check and correct the cover letter
+            fact_check_agent = FactCheckerAgent()
+            cover_letter = fact_check_agent.check(profile, precheck_cover_letter) 
+        else:
+            cover_letter = precheck_cover_letter
         # save cover letter
         if save_path:
             save_path = Path(save_path)
             save_path.parent.mkdir(parents=True, exist_ok=True)
-            save_path.write_text(data["full_letter"], encoding="utf-8")
+            save_path.write_text(cover_letter, encoding="utf-8")
+
+
+def strip_cover_letter(response:types.GenerateContentResponse):
+    import json
+    import re
+
+    content = response.text.strip()
+
+    # 1. Strip out markdown code blocks (```json ... ```) if Gemini includes them
+    if content.startswith("```"):
+        content = re.sub(r"^```(?:json)?\s*", "", content)
+        content = re.sub(r"\s*```$", "", content)
+
+    # 2. Parse the clean JSON string into a Python dictionary
+    data = json.loads(content)
+
+    # 3. Extract just the letter text
+    letter_text = data["full_letter"]
+    return letter_text
 
 
 def main() -> None:
