@@ -154,7 +154,6 @@ class FactCheckerAgent:
         )
    
         start = time.perf_counter()
-        breakpoint()
         response = self.client.create(
             model=self.model,
             contents= f"Profile:\n{profile}\n\nCover Letter:\n{cover_letter}",
