@@ -8,11 +8,9 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
-import sqlite3
 import time
 from pathlib import Path
-from typing import Any, Dict, List, Set
-from urllib.parse import urlsplit, urlunsplit
+from typing import Any, Dict, List
 
 from job_agent.config import DATA_DIR
 from job_agent.database import JobDatabase
@@ -22,11 +20,7 @@ from job_agent.llm.evaluator import assess_job
 from job_agent.llm.decision_agent import DecisionAgent
 from job_agent.llm.cover_letter import CoverLetterAgent, slugify
 from job_agent.models import CandidatePreferences, CandidateProfile, Job, LLMDecision
-
-
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
+from job_agent.dashboard import show_dashboard
 
 def load_json(path: str | Path) -> Dict[str, Any]:
     return json.loads(Path(path).read_text(encoding="utf-8"))
@@ -43,99 +37,10 @@ def parse_skip_steps(raw_values: List[str]) -> List[int]:
     return steps
 
 
-def normalize_url(url: str) -> str:
-    """Normalize a job URL so trivial differences don't create 'new' jobs
-    (trailing slash, fragment, scheme/host casing)."""
-    parts = urlsplit((url or "").strip())
-    return urlunsplit((parts.scheme.lower(), parts.netloc.lower(), parts.path.rstrip("/"), parts.query, ""))
+def get_batch_jobs(db: JobDatabase, batch_size: int) -> List[Job]:
+    """Newest jobs in the DB that have no action recorded yet (jobs.action is empty)."""
+    return [Job.from_dict(row) for row in db.get_unprocessed_jobs(batch_size)]
 
-
-# ---------------------------------------------------------------------------
-# Database helpers (existing-job checks live here)
-# ---------------------------------------------------------------------------
-
-def ensure_actions_table(db_path: str | Path) -> None:
-    with sqlite3.connect(db_path) as conn:
-        conn.execute(
-            """
-            CREATE TABLE IF NOT EXISTS job_actions (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                job_url TEXT NOT NULL UNIQUE,
-                action TEXT NOT NULL,
-                timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
-            )
-            """
-        )
-        conn.commit()
-
-
-def record_action(db_path: str | Path, url: str, action: str) -> None:
-    with sqlite3.connect(db_path) as conn:
-        conn.execute(
-            """
-            INSERT INTO job_actions (job_url, action) VALUES (?, ?)
-            ON CONFLICT(job_url) DO UPDATE SET action = excluded.action,
-                                               timestamp = CURRENT_TIMESTAMP
-            """,
-            (url, action),
-        )
-        conn.commit()
-
-
-def get_job_urls(db_path: str | Path) -> Set[str]:
-    """All job URLs currently stored in the jobs table (normalized)."""
-    with sqlite3.connect(db_path) as conn:
-        return {normalize_url(r[0]) for r in conn.execute("SELECT url FROM jobs") if r[0]}
-
-
-def get_acted_urls(db_path: str | Path) -> Set[str]:
-    """All job URLs that already have a recorded action (normalized)."""
-    with sqlite3.connect(db_path) as conn:
-        return {normalize_url(r[0]) for r in conn.execute("SELECT job_url FROM job_actions") if r[0]}
-
-
-def has_action(db_path: str | Path, url: str) -> bool:
-    """True if this job was already evaluated / applied to / skipped."""
-    return normalize_url(url) in get_acted_urls(db_path)
-
-
-def get_batch_jobs(db_path: str | Path, batch_size: int) -> List[Job]:
-    """Return up to `batch_size` jobs that have not been acted upon yet.
-
-    - Excludes any job whose (normalized) URL is already in job_actions.
-    - De-duplicates rows in `jobs` that point to the same normalized URL.
-    - Newest jobs first.
-    """
-    with sqlite3.connect(db_path) as conn:
-        conn.row_factory = sqlite3.Row
-        acted = {normalize_url(r["job_url"]) for r in conn.execute("SELECT job_url FROM job_actions")}
-        rows = conn.execute("SELECT * FROM jobs ORDER BY id DESC").fetchall()
-
-    batch: List[Job] = []
-    seen: Set[str] = set()
-    already_processed = 0
-
-    for row in rows:
-        data = dict(row)
-        key = normalize_url(data.get("url", ""))
-        if not key or key in seen:
-            continue
-        seen.add(key)
-        if key in acted:
-            already_processed += 1
-            continue
-        batch.append(Job.from_dict(data))
-        if len(batch) >= batch_size:
-            break
-
-    if already_processed:
-        print(f"[INFO] Ignored {already_processed} job(s) already processed in the DB.")
-    return batch
-
-
-# ---------------------------------------------------------------------------
-# Batch processing
-# ---------------------------------------------------------------------------
 
 async def process_batch(
     db: JobDatabase,
@@ -156,18 +61,16 @@ async def process_batch(
         print("\n========================================")
         print("STEP 1: Scraping batch of new jobs...")
         print("========================================")
-        known_before = get_job_urls(db.path)
+        before = db.count_jobs()
+        # The scraper skips URLs already in the DB (see DevBgScraper.run)
         await asyncio.to_thread(scraper.run, start_url=args.url, database=db)
-        known_after = get_job_urls(db.path)
-        new_urls = known_after - known_before
-        print(f"[INFO] Scrape finished: {len(new_urls)} new job(s) added "
-              f"({len(known_after)} total in DB).")
+        after = db.count_jobs()
+        print(f"[INFO] Scrape finished: {after - before} new job(s) added ({after} total in DB).")
 
-    # Only jobs that have not been acted upon yet
-    batch_jobs: List[Job] = get_batch_jobs(db.path, args.batch_size)
+    batch_jobs = get_batch_jobs(db, args.batch_size)
     if not batch_jobs:
-        print("[INFO] No unprocessed jobs found. Everything in the DB has been handled already; "
-              "try a different --url or more --max-pages.")
+        print("[INFO] No unprocessed jobs found: every job in the DB already has an action. "
+              "Try a different --url or a higher --max-pages.")
         return False
 
     print(f"[INFO] Found {len(batch_jobs)} unprocessed job(s) in this batch.\n")
@@ -201,8 +104,8 @@ async def process_batch(
         cover_letter_agent = CoverLetterAgent()
 
         for i, job in enumerate(batch_jobs, 1):
-            # Re-check right before doing expensive LLM work
-            if has_action(db.path, job.url):
+            # Re-check right before the expensive LLM work
+            if db.has_action(job.url):
                 print(f"[{i}/{len(batch_jobs)}] Already processed, skipping: {job.title} @ {job.company}")
                 continue
 
@@ -234,11 +137,11 @@ async def process_batch(
                     print(f"[INFO] Cover letter saved to: {cover_letter_path}")
             except Exception as exc:
                 print(f"[ERROR] Evaluation failed for {job.title} @ {job.company}: {exc}")
-                record_action(db.path, job.url, "EVAL_ERROR")
+                db.record_action(job.url, "EVAL_ERROR")
                 continue
 
             # Record immediately so a crash/quit later doesn't lose progress
-            record_action(db.path, job.url, "RECOMMENDED" if decision.decision == "APPLY" else "NOT_RECOMMENDED")
+            db.record_action(job.url, "RECOMMENDED" if decision.decision == "APPLY" else "NOT_RECOMMENDED")
             evaluated_batch.append({"job": job, "decision": decision, "cover_letter_path": cover_letter_path})
 
     # ---------------- STEP 3: human supervision ----------------
@@ -290,7 +193,7 @@ async def process_batch(
             else:
                 print("Invalid input. Please enter 'a' (apply), 's' (skip), or 'q' (quit).")
 
-        record_action(db.path, job.url, action_status)
+        db.record_action(job.url, action_status)
         print(f"[RECORDED] Job status saved as: {action_status}\n")
 
     return True
@@ -300,7 +203,7 @@ def main():
     parser = argparse.ArgumentParser(description="DEV.BG Job Discovery & Application Agent")
     parser.add_argument("--url", default="https://dev.bg/company/jobs/ml-ai-data/", help="Start URL to scrape")
     parser.add_argument("--batch-size", type=int, default=10, help="Jobs per batch (default: 10)")
-    parser.add_argument("--max-pages", type=int, default=1, help="Maximum pages to scrape per batch")
+    parser.add_argument("--max-pages", type=int, default=5, help="Maximum listing pages to scan for NEW jobs")
     parser.add_argument("--db", default="data/jobs.db", help="Path to SQLite database")
     parser.add_argument("--profile", default="data/candidate_profile.json", help="Candidate profile JSON")
     parser.add_argument("--preferences", default="data/candidate_preferences.json", help="Candidate preferences JSON")
@@ -320,7 +223,6 @@ def main():
     print("========================================")
 
     db = JobDatabase(path=args.db)
-    ensure_actions_table(db.path)
 
     scraper = DevBgScraper(headless=args.headless, max_jobs=args.batch_size, max_pages=args.max_pages)
     profile = CandidateProfile.from_dict(load_json(args.profile))
@@ -332,6 +234,7 @@ def main():
             should_continue = asyncio.run(
                 process_batch(db, scraper, profile, prefs, decision_agent, args)
             )
+            show_dashboard(db.path)          
             if not should_continue:
                 break
 

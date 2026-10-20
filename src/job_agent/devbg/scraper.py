@@ -4,7 +4,7 @@ import re
 import time
 from typing import Any, Dict, List, Optional, Tuple
 from urllib.parse import urlparse
-
+from typing import Any, Dict, List, Optional, Set, Tuple
 from playwright.sync_api import Page, sync_playwright
 
 try:
@@ -32,12 +32,21 @@ class DevBgScraper:
         self.max_jobs = max_jobs
         self.max_pages = max_pages
 
-    def discover_job_urls(self, page: Page, start_url: str) -> List[str]:
+
+    def discover_job_urls(
+        self,
+        page: Page,
+        start_url: str,
+        known_urls: Optional[Set[str]] = None,
+    ) -> List[str]:
         """
-        Discover job listing URLs from search/listing pages.
+        Discover NEW job listing URLs from search/listing pages.
+        URLs already in the DB (known_urls) are skipped and don't count toward max_jobs.
         """
+        known_urls = known_urls or set()
         discovered: List[str] = []
         seen = set()
+        skipped_known = 0
 
         for page_number in range(1, self.max_pages + 1):
             if page_number == 1:
@@ -65,7 +74,7 @@ class DevBgScraper:
             if not links:
                 break
 
-            new_links_found = 0
+            unseen_on_page = 0
             for href in links:
                 if not href:
                     continue
@@ -82,21 +91,28 @@ class DevBgScraper:
 
                 if clean_url in seen:
                     continue
-
                 seen.add(clean_url)
-                discovered.append(clean_url)
-                new_links_found += 1
+                unseen_on_page += 1
 
+                if clean_url in known_urls:
+                    skipped_known += 1
+                    continue
+
+                discovered.append(clean_url)
                 print(f"  {len(discovered):02d}. {clean_url}")
 
                 if self.max_jobs and len(discovered) >= self.max_jobs:
+                    print(f"[INFO] Skipped {skipped_known} already-known job(s).")
                     return discovered
 
-            if new_links_found == 0:
+            # Stop only when the page had no links we haven't seen at all
+            # (all-known pages should still continue to the next page)
+            if unseen_on_page == 0:
                 break
 
             time.sleep(self.delay)
 
+        print(f"[INFO] Skipped {skipped_known} already-known job(s).")
         return discovered
 
     @staticmethod
@@ -621,7 +637,9 @@ class DevBgScraper:
                 )
                 page = context.new_page()
 
-                job_urls = self.discover_job_urls(page, start_url)
+                known_urls = database.known_urls() if database is not None and hasattr(database, "known_urls") else set()
+                job_urls = self.discover_job_urls(page, start_url, known_urls)
+                
                 print(f"\nDiscovered {len(job_urls)} jobs.")
 
                 scraped_jobs: List[Job] = []

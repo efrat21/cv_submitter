@@ -2,7 +2,7 @@ import json
 import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, Optional, Union
+from typing import Any, Dict, List, Optional, Set, Union
 
 
 SCHEMA = """
@@ -49,12 +49,13 @@ class JobDatabase:
         self._migrate()
         self.connection.executescript(SCHEMA)
         self.connection.commit()
-        
 
     def _migrate(self) -> None:
         columns = {
             row[1] for row in self.connection.execute("PRAGMA table_info(jobs)")
         }
+        if not columns:
+            return  # fresh DB, SCHEMA will create everything
         if "action" not in columns:
             self.connection.execute("ALTER TABLE jobs ADD COLUMN action TEXT")
         if "action_at" not in columns:
@@ -73,17 +74,8 @@ class JobDatabase:
         self.connection.execute(
             """
             INSERT INTO jobs (
-                url,
-                title,
-                company,
-                location,
-                work_model,
-                date_text,
-                date_published,
-                tags_json,
-                description,
-                first_seen,
-                last_seen
+                url, title, company, location, work_model, date_text,
+                date_published, tags_json, description, first_seen, last_seen
             )
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 
@@ -115,16 +107,48 @@ class JobDatabase:
 
         self.connection.commit()
 
+    # ------------------------------------------------------------------
+    # Existing-job checks
+    # ------------------------------------------------------------------
+
+    def has_job(self, url: str) -> bool:
+        """True if the job URL is already stored in the DB (scraped before)."""
+        cursor = self.connection.execute("SELECT 1 FROM jobs WHERE url = ?", (url,))
+        return cursor.fetchone() is not None
+
     def already_processed(self, url: str) -> bool:
+        """Kept for backward compatibility. NOTE: this only checks that the job
+        is stored, not that it was evaluated. Use has_job() / has_action()."""
+        return self.has_job(url)
+
+    def known_urls(self) -> Set[str]:
+        """All job URLs already stored. Used by the scraper to skip known jobs."""
+        return {row[0] for row in self.connection.execute("SELECT url FROM jobs")}
+
+    def has_action(self, url: str) -> bool:
+        """True if the job already has a recorded action (evaluated/applied/skipped)."""
         cursor = self.connection.execute(
-            "SELECT 1 FROM jobs WHERE url = ?", (url,)
+            "SELECT 1 FROM jobs WHERE url = ? AND action IS NOT NULL AND action != ''",
+            (url,),
         )
         return cursor.fetchone() is not None
 
+    def get_unprocessed_jobs(self, limit: int) -> List[Dict[str, Any]]:
+        """Newest stored jobs that have no action recorded yet."""
+        cursor = self.connection.execute(
+            """
+            SELECT * FROM jobs
+            WHERE action IS NULL OR action = ''
+            ORDER BY id DESC
+            LIMIT ?
+            """,
+            (limit,),
+        )
+        columns = [c[0] for c in cursor.description]
+        return [dict(zip(columns, row)) for row in cursor.fetchall()]
+
     def count_jobs(self) -> int:
-        result = self.connection.execute(
-            "SELECT COUNT(*) FROM jobs"
-        ).fetchone()
+        result = self.connection.execute("SELECT COUNT(*) FROM jobs").fetchone()
         return result[0] if result else 0
 
     def close(self) -> None:
