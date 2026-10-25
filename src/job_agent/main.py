@@ -102,6 +102,7 @@ async def process_batch(
         cover_letters_dir = Path(DATA_DIR) / "cover_letters"
         cover_letters_dir.mkdir(parents=True, exist_ok=True)
         cover_letter_agent = CoverLetterAgent()
+        history = db.get_feedback_history()
 
         for i, job in enumerate(batch_jobs, 1):
             # Re-check right before the expensive LLM work
@@ -116,7 +117,11 @@ async def process_batch(
 
                 print("[TIMING] Starting decision evaluation...", flush=True)
                 start = time.perf_counter()
-                decision = decision_agent.decide(profile, prefs, match_result)
+                decision = decision_agent.decide(profile, prefs, match_result, history=history)
+                if getattr(decision, "error", None):
+                    print(f"[ERROR] Agent error: {decision.error}")
+                    db.record_action(job.url, "EVAL_ERROR")
+                    continue
                 print(
                     f"[TIMING] Decision completed in {time.perf_counter() - start:.1f}s "
                     f"(decision={decision.decision})",
@@ -179,6 +184,7 @@ async def process_batch(
         except Exception as exc:
             print(f"[ERROR] Browser automation error: {exc}")
 
+        note: Optional[str] = None
         while True:
             choice = input("Action [a]pply / [s]kip / [q]uit: ").strip().lower()
             if choice in ("a", "apply"):
@@ -186,6 +192,7 @@ async def process_batch(
                 break
             elif choice in ("s", "skip"):
                 action_status = "SKIPPED"
+                note = input("Why skip? (one line, Enter to leave blank): ").strip() or None
                 break
             elif choice in ("q", "quit"):
                 print("[INFO] Exiting agent session.")
@@ -193,7 +200,7 @@ async def process_batch(
             else:
                 print("Invalid input. Please enter 'a' (apply), 's' (skip), or 'q' (quit).")
 
-        db.record_action(job.url, action_status)
+        db.record_action(job.url, action_status, note=note)
         print(f"[RECORDED] Job status saved as: {action_status}\n")
 
     return True

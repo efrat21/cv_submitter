@@ -35,38 +35,48 @@ def pct(part: int, whole: int) -> str:
 
 
 def fetch_stats(db_path: Path, recent: int):
-    with sqlite3.connect(db_path) as conn:
-        total = conn.execute("SELECT COUNT(*) FROM jobs").fetchone()[0]
-        counts = dict(
-            conn.execute(
+    if not db_path.exists():
+        return 0, {}, [], []
+    try:
+        with sqlite3.connect(db_path) as conn:
+            table_exists = conn.execute(
+                "SELECT 1 FROM sqlite_master WHERE type='table' AND name='jobs'"
+            ).fetchone()
+            if not table_exists:
+                return 0, {}, [], []
+            total = conn.execute("SELECT COUNT(*) FROM jobs").fetchone()[0]
+            counts = dict(
+                conn.execute(
+                    """
+                    SELECT COALESCE(NULLIF(action, ''), 'UNPROCESSED') AS status, COUNT(*)
+                    FROM jobs
+                    GROUP BY status
+                    """
+                ).fetchall()
+            )
+            recent_rows = conn.execute(
                 """
-                SELECT COALESCE(NULLIF(action, ''), 'UNPROCESSED') AS status, COUNT(*)
+                SELECT title, company, action_at
                 FROM jobs
-                GROUP BY status
+                WHERE action = 'APPLIED'
+                ORDER BY action_at DESC
+                LIMIT ?
+                """,
+                (recent,),
+            ).fetchall()
+            top_companies = conn.execute(
+                """
+                SELECT company, COUNT(*) AS n
+                FROM jobs
+                WHERE action = 'APPLIED'
+                GROUP BY company
+                ORDER BY n DESC, company
+                LIMIT 5
                 """
             ).fetchall()
-        )
-        recent_rows = conn.execute(
-            """
-            SELECT title, company, action_at
-            FROM jobs
-            WHERE action = 'APPLIED'
-            ORDER BY action_at DESC
-            LIMIT ?
-            """,
-            (recent,),
-        ).fetchall()
-        top_companies = conn.execute(
-            """
-            SELECT company, COUNT(*) AS n
-            FROM jobs
-            WHERE action = 'APPLIED'
-            GROUP BY company
-            ORDER BY n DESC, company
-            LIMIT 5
-            """
-        ).fetchall()
-    return total, counts, recent_rows, top_companies
+        return total, counts, recent_rows, top_companies
+    except sqlite3.OperationalError:
+        return 0, {}, [], []
 
 
 def render(total: int, counts: dict, recent_rows, top_companies) -> str:

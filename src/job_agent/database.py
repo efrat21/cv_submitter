@@ -26,7 +26,8 @@ CREATE TABLE IF NOT EXISTS jobs (
     last_seen TEXT NOT NULL,
 
     action TEXT,
-    action_at TEXT
+    action_at TEXT,
+    action_note TEXT
 );
 
 CREATE INDEX IF NOT EXISTS idx_jobs_title
@@ -60,6 +61,8 @@ class JobDatabase:
             self.connection.execute("ALTER TABLE jobs ADD COLUMN action TEXT")
         if "action_at" not in columns:
             self.connection.execute("ALTER TABLE jobs ADD COLUMN action_at TEXT")
+        if "action_note" not in columns:
+            self.connection.execute("ALTER TABLE jobs ADD COLUMN action_note TEXT")
         self.connection.commit()
 
     def save_job(self, job: Any) -> None:
@@ -154,17 +157,39 @@ class JobDatabase:
     def close(self) -> None:
         self.connection.close()
 
-    def record_action(self, url: str, action: str) -> bool:
+    def record_action(self, url: str, action: str, note: Optional[str] = None) -> bool:
         """Set the latest action for a job (e.g. "NOT_RECOMMENDED").
 
+        `note` is an optional free-text reason (e.g. why you skipped a job);
+        it is fed back to the decision agent as preference history.
         Returns False if the job URL is not in the database.
         """
         cursor = self.connection.execute(
-            "UPDATE jobs SET action = ?, action_at = ? WHERE url = ?",
-            (action, datetime.now(timezone.utc).isoformat(), url),
+            "UPDATE jobs SET action = ?, action_at = ?, action_note = ? WHERE url = ?",
+            (action, datetime.now(timezone.utc).isoformat(), note, url),
         )
         self.connection.commit()
         return cursor.rowcount > 0
+
+    def get_feedback_history(self, limit: int = 200) -> List[Dict[str, Any]]:
+        """Your own decisions (APPLIED / SKIPPED), newest first.
+
+        Agent verdicts (RECOMMENDED / NOT_RECOMMENDED) are deliberately excluded:
+        learning from the agent's own output would be circular.
+        """
+        cursor = self.connection.execute(
+            """
+            SELECT title, company, location, work_model, tags_json,
+                   action, action_note, action_at
+            FROM jobs
+            WHERE action IN ('APPLIED', 'SKIPPED')
+            ORDER BY action_at DESC
+            LIMIT ?
+            """,
+            (limit,),
+        )
+        columns = [c[0] for c in cursor.description]
+        return [dict(zip(columns, row)) for row in cursor.fetchall()]
 
     def get_action(self, url: str) -> Optional[str]:
         row = self.connection.execute(

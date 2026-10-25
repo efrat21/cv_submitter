@@ -299,6 +299,8 @@ def assess_job(job: Job, profile: CandidateProfile) -> MatchResult:
         if phrase in description_lower:
             requirement_signals.append(phrase)
 
+    req_years = float(min(years)) if years else None
+
     match_result = MatchResult(
         job=job,
         matched_skills=core_results + related_results,
@@ -306,39 +308,10 @@ def assess_job(job: Job, profile: CandidateProfile) -> MatchResult:
         prefilter_score=score,
         verification_flags=verification_flags,
         detected_seniority=detected_seniority,
-        required_years=years,
+        required_years=req_years,
     )
 
     return match_result
-
-    # return {
-    #     # "id": job.id,
-    #     "title": title,
-    #     "company": job.company,
-    #     "url": job.url,
-    #     "location": job.location,
-    #     "work_model": job.work_model,
-    #     "description": description,
-    #     "match_score": score,
-    #     "recommendation": recommendation,
-    #     "core_assessment": core_results,
-    #     "related_assessment": related_results,
-    #     "core_missing": missing_core,
-    #     "related_missing": missing_related,
-    #     "evidence": evidence_summary,
-    #     "verification_flags": verification_flags,
-    #     "description_signals": requirement_signals,
-    #     "scoring_method": {
-    #         "core_skill_weight": 2,
-    #         "related_skill_weight": 1,
-    #         "evidence_weights": CONTEXT_WEIGHTS,
-    #         "warning": (
-    #             "Preliminary rule-based score. It is not a probability "
-    #             "of getting an interview and does not replace review "
-    #             "of mandatory requirements."
-    #         ),
-    #     },
-    # }
 
 
 def main():
@@ -359,7 +332,8 @@ def main():
     )
     args = parser.parse_args()
 
-    profile = load_profile(args.profile)
+    raw_profile = load_profile(args.profile)
+    profile = CandidateProfile.from_dict(raw_profile) if isinstance(raw_profile, dict) else raw_profile
 
     connection = sqlite3.connect(args.db)
     connection.row_factory = sqlite3.Row
@@ -377,15 +351,15 @@ def main():
         connection.close()
 
     results = [
-        assess_job(dict(row), profile)
+        assess_job(Job.from_dict(dict(row)), profile)
         for row in rows
     ]
 
     # Highest-priority jobs appear first.
     results.sort(
         key=lambda result: (
-            result["match_score"],
-            result["title"].lower(),
+            result.prefilter_score or 0,
+            result.job.title.lower(),
         ),
         reverse=True,
     )
@@ -393,7 +367,7 @@ def main():
     output_path = Path(args.output)
     output_path.parent.mkdir(parents=True, exist_ok=True)
     output_path.write_text(
-        json.dumps(results, indent=2, ensure_ascii=False),
+        json.dumps([r.to_dict() for r in results], indent=2, ensure_ascii=False),
         encoding="utf-8",
     )
 
@@ -403,32 +377,28 @@ def main():
 
     for rank, result in enumerate(results, start=1):
         print(
-            f"{rank}. [{result['match_score']}/100] "
-            f"{result['recommendation']}"
+            f"{rank}. [{result.prefilter_score}/100]"
         )
         print(
-            f"   {result['title']} — {result['company']}"
+            f"   {result.job.title} — {result.job.company}"
+        )
+        matched_names = [
+            s.get("skill", "") if isinstance(s, dict) else str(s)
+            for s in result.matched_skills
+        ]
+        print(
+            "   Matched skills: "
+            + (", ".join(filter(None, matched_names)) or "None")
         )
         print(
-            "   Core evidence: "
-            + (
-                ", ".join(
-                    item["skill"]
-                    for item in result["core_assessment"]
-                    if item["status"] == "evidence_found"
-                )
-                or "None"
-            )
-        )
-        print(
-            "   Core not established: "
-            + (", ".join(result["core_missing"]) or "None")
+            "   Missing skills: "
+            + (", ".join(result.missing_skills) or "None")
         )
 
-        for flag in result["verification_flags"]:
+        for flag in result.verification_flags:
             print(f"   Check: {flag}")
 
-        print(f"   {result['url']}\n")
+        print(f"   {result.job.url}\n")
 
 
 if __name__ == "__main__":

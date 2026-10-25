@@ -165,6 +165,16 @@ class MatchResult:
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "MatchResult":
         years = data.get("required_years")
+        if isinstance(years, (list, tuple)):
+            req_years = float(min(years)) if years else None
+        elif years is not None:
+            try:
+                req_years = float(years)
+            except (ValueError, TypeError):
+                req_years = None
+        else:
+            req_years = None
+
         score = data.get("prefilter_score")
         if score is None and data.get("match_score") is not None:
             score = data.get("match_score")
@@ -198,10 +208,10 @@ class MatchResult:
             job=Job.from_dict(job_data),
             matched_skills=matched,
             missing_skills=missing,
-            title_keyword_hits=list(data.get("title_keyword_hits") or []),
             detected_seniority=data.get("detected_seniority", ""),
-            required_years=float(years) if years is not None else None,
+            required_years=req_years,
             prefilter_score=int(score) if score is not None else None,
+            verification_flags=list(data.get("verification_flags") or []),
         )
 
 

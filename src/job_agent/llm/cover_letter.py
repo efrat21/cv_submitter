@@ -59,6 +59,13 @@ WRITING:
 - Avoid clichés, generic enthusiasm, buzzwords, repetition, and exaggerated claims.
 - Close with one brief invitation to discuss the opportunity.
 
+Example: cover letter for Progress AI Product Manager role:
+My background combines hands-on AI development with 15 years of leading complex R&D programs, giving me both the technical depth to evaluate AI solutions and the experience to turn ambiguous challenges into structured execution plans.
+
+At Tensor Technologies, I developed machine learning pipelines, built a RAG-based chatbot, and researched deepfake detection, balancing model performance, implementation complexity, and cost. Before that, at Rafael, I led eight multidisciplinary R&D programs, managed budgets of ₪1–2 million annually, and directed a seven-year product development lifecycle from feasibility through operational deployment. I improved team productivity by approximately 20% through structured roadmaps and KPI-driven delivery, while aligning scientists, engineers, and stakeholders around shared objectives. My experience combines analytical decision-making, technical execution, and the ability to communicate complex ideas clearly.
+
+I would welcome the opportunity to discuss how my AI expertise and technical leadership could help Progress turn emerging AI capabilities into valuable products for developers.
+
 OUTPUT: Return ONLY valid JSON matching the supplied schema. The full_letter field must contain the complete, ready-to-send letter. Do not include commentary or extra fields.
 """
 
@@ -144,20 +151,25 @@ class FactCheckerAgent:
     def check(
         self,
         profile: CandidateProfile,
-        cover_letter: CoverLetter,
-    ) -> bool:
-        
+        cover_letter: str,
+    ) -> str:
+        profile_json = json.dumps(
+            profile.to_dict() if hasattr(profile, "to_dict") else profile,
+            ensure_ascii=False,
+            indent=2,
+        )
+        prompt_content = f"Profile:\n{profile_json}\n\nCover Letter:\n{cover_letter}"
+
         print(
             f"[TIMING] fact-check started | model={self.model} "
-            f"| prompt_chars={len(prompt)} | num_ctx={self.num_ctx}",
+            f"| prompt_chars={len(prompt_content)} | num_ctx={self.num_ctx}",
             flush=True,
         )
    
         start = time.perf_counter()
-        response = self.client.create(
+        response = self.client.models.generate_content(
             model=self.model,
-            contents= f"Profile:\n{profile}\n\nCover Letter:\n{cover_letter}",
-            format=COVER_LETTER_SCHEMA,
+            contents=prompt_content,
             config=types.GenerateContentConfig(
                 system_instruction=SYSTEM_PROMPT_factcheck,
                 temperature=self.temperature,
@@ -168,8 +180,11 @@ class FactCheckerAgent:
             f"{time.perf_counter() - start:.1f}s",
             flush=True,
         )
-        content = strip_cover_letter(response.text)
-        return content
+        text = response.text or ""
+        marker = "### 2. Revised Cover Letter"
+        if marker in text:
+            return text.split(marker, 1)[1].strip()
+        return text.strip()
 
 class CoverLetterAgent:
     """Agent that produces role-specific cover letters using local Ollama."""
@@ -309,8 +324,9 @@ def main() -> None:
     parser.add_argument("--profile", default="data/candidate_profile.json", help="Path to candidate profile")
     parser.add_argument("--db", default="data/jobs.db", help="Path to SQLite jobs.db")
     parser.add_argument("--out-dir", default="data/cover_letters", help="Output directory for cover letters")
-    parser.add_argument("--model", default="qwen2.5:7b", help="Ollama model name")
+    parser.add_argument("--model", default="gemini-3.8-flash", help="Gemini model name")
     parser.add_argument("--candidate-name", default="Efrat", help="Candidate full name")
+    parser.add_argument("--fact-check", action="store_true", help="Enable fact-checking agent")
     parser.add_argument("--max-jobs", type=int, default=None, help="Optional limit on number of letters to generate")
     args = parser.parse_args()
 
@@ -384,21 +400,28 @@ def main() -> None:
         print(f"[{i}/{len(apply_jobs)}] Generating cover letter for: {title} @ {company} ...", flush=True)
 
         try:
-            letter = agent.generate(profile, job, candidate_name=candidate_name, decision_context=decision_obj)
-
-            # Save markdown file
             slug = f"{slugify(company)}_{slugify(title)}"
             file_name = f"{slug}.md"
             file_path = out_dir / file_name
 
-            file_content = letter.content
+            letter_text = agent.run(
+                profile=profile,
+                job=job,
+                candidate_name=candidate_name,
+                decision_context=decision_obj,
+                save_path=str(file_path),
+                use_factchecker=args.fact_check,
+            )
 
-            file_path.write_text(file_content, encoding="utf-8")
-            letter.file_path = str(file_path)
-            generated_letters.append(letter.to_dict())
+            generated_letters.append({
+                "job_url": job_url,
+                "title": title,
+                "company": company,
+                "file_path": str(file_path),
+                "content": letter_text,
+            })
 
-            print(f"    -> Saved to: {file_path}")
-            print(f"    -> Subject: {letter.subject_line}\n")
+            print(f"    -> Saved to: {file_path}\n")
 
         except Exception as e:
             log.error("Failed to generate cover letter for %s: %s", title, e)

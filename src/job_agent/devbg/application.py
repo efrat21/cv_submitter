@@ -352,9 +352,9 @@ async def run(args: argparse.Namespace) -> None:
 
         # The user-selected job page may have an Apply button that opens the form.
         if args.open_apply:
-            await maybe_open_application_form(page)
-
-        # If a new tab was opened, this script does not guess which tab to use.
+            form_page = await maybe_open_application_form(page)
+            if form_page is not None:
+                page = form_page
         filled: list[str] = []
         await safe_fill(page, "name", FIELD_PATTERNS["name"], args.name, filled)
         await safe_fill(page, "email", FIELD_PATTERNS["email"], args.email, filled)
