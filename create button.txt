@@ -1,0 +1,17 @@
+Paste into PowerShell:
+
+$WshShell = New-Object -ComObject WScript.Shell
+
+# Find the actual Desktop folder
+$Desktop = [Environment]::GetFolderPath('Desktop')
+$ShortcutPath = Join-Path $Desktop 'Run Job Agent Daily.lnk'
+
+# Create the shortcut
+$Shortcut = $WshShell.CreateShortcut($ShortcutPath)
+$Shortcut.TargetPath = "$env:WINDIR\System32\WindowsPowerShell\v1.0\powershell.exe"
+$Shortcut.Arguments = '-NoProfile -Command "Start-ScheduledTask -TaskName JobAgentDaily"'
+$Shortcut.WorkingDirectory = 'D:\cv_submitter'
+$Shortcut.Description = 'Start the daily job application routine'
+$Shortcut.Save()
+
+Write-Host "Shortcut saved to: $ShortcutPath"
