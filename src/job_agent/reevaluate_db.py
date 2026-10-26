@@ -24,11 +24,11 @@ from typing import Any, Dict, List, Optional
 
 from job_agent.config import DATA_DIR
 from job_agent.database import JobDatabase
-from job_agent.devbg.application import run as run_browser_application
-from job_agent.llm.cover_letter import CoverLetterAgent, slugify
+from job_agent.llm.cover_letter import CoverLetterAgent
 from job_agent.llm.decision_agent import DecisionAgent
 from job_agent.llm.evaluator import assess_job
 from job_agent.models import CandidatePreferences, CandidateProfile, Job
+from job_agent.review import letter_path_for, review_applications
 
 
 def load_json(path: str) -> Dict[str, Any]:
@@ -51,53 +51,6 @@ def select_jobs(db_path: str, work_model: str, actions: List[str], limit: int) -
             (work_model, work_model, *actions, limit),
         ).fetchall()
     return [Job.from_dict(dict(r)) for r in rows]
-
-
-def letter_path_for(job: Job) -> Path:
-    # Same naming as the orchestrator
-    return Path(DATA_DIR) / "cover_letters" / f"{slugify(job.company)}_{slugify(job.title)}.md"
-
-
-async def review_applications(items: List[Dict[str, Any]], args: argparse.Namespace, db: JobDatabase) -> None:
-    """Human-supervised application loop (same flow as orchestrator Step 3)."""
-    for idx, item in enumerate(items, 1):
-        job: Job = item["job"]
-        letter: Optional[Path] = item.get("letter")
-        print(f"\n--- Job {idx}/{len(items)}: {job.title} at {job.company} ---")
-        print(f"    {job.url}")
-
-        app_ns = argparse.Namespace(
-            url=job.url,
-            name=args.name,
-            email=args.email,
-            cv=args.cv,
-            cover_letter_file=str(letter) if letter and letter.exists() else None,
-            open_apply=True,
-            headed=True,
-        )
-        try:
-            await run_browser_application(app_ns)
-        except Exception as exc:  # noqa: BLE001
-            print(f"[ERROR] Browser automation error: {exc}")
-
-        note: Optional[str] = None
-        while True:
-            choice = input("Action [a]pply / [s]kip / [q]uit: ").strip().lower()
-            if choice in ("a", "apply"):
-                status = "APPLIED"
-                break
-            if choice in ("s", "skip"):
-                status = "SKIPPED"
-                note = input("Why skip? (one line, Enter to leave blank): ").strip() or None
-                break
-            if choice in ("q", "quit"):
-                print("[INFO] Stopping. Remaining jobs stay RECOMMENDED; "
-                      "finish them later with --review-only.")
-                return
-            print("Invalid input. Please enter 'a', 's' or 'q'.")
-
-        db.record_action(job.url, status, note)
-        print(f"[RECORDED] {status}")
 
 
 def main() -> None:
@@ -132,7 +85,7 @@ def main() -> None:
         if args.review_only:
             jobs = select_jobs(args.db, args.work_model, ["RECOMMENDED"], args.limit)
             print(f"[INFO] {len(jobs)} RECOMMENDED '{args.work_model}' job(s) awaiting review.")
-            items = [{"job": j, "letter": letter_path_for(j)} for j in jobs]
+            items = [{"job": j, "letter": letter_path_for(j), "cv": db.get_cv_path(j.url)} for j in jobs]
             for it in items:
                 if not it["letter"].exists():
                     print(f"[WARN] No cover letter file for {it['job'].title} @ {it['job'].company}")
@@ -182,7 +135,8 @@ def main() -> None:
                 continue
 
             print(f"    -> NOW APPLY (conf {decision.confidence}): {decision.rationale[:200]}")
-            item: Dict[str, Any] = {"job": job, "decision": decision, "letter": None}
+            item: Dict[str, Any] = {"job": job, "decision": decision, "letter": None,
+                                    "cv": db.get_cv_path(job.url)}
             flipped.append(item)
 
             if args.dry_run:

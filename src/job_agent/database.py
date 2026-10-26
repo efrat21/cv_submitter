@@ -2,7 +2,9 @@ import json
 import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Set, Union
+from typing import Any, Dict, Iterable, List, Optional, Set, Union
+import re
+import hashlib
 
 
 SCHEMA = """
@@ -21,13 +23,15 @@ CREATE TABLE IF NOT EXISTS jobs (
 
     tags_json TEXT,
     description TEXT,
+    content_hash TEXT,
 
     first_seen TEXT NOT NULL,
     last_seen TEXT NOT NULL,
 
     action TEXT,
     action_at TEXT,
-    action_note TEXT
+    action_note TEXT,
+    cv_path TEXT
 );
 
 CREATE INDEX IF NOT EXISTS idx_jobs_title
@@ -39,6 +43,27 @@ ON jobs(company);
 CREATE INDEX IF NOT EXISTS idx_jobs_action
 ON jobs(action);
 """
+
+def normalize_job_text(value: str) -> str:
+    """Normalize text for duplicate comparison."""
+    value = (value or "").lower()
+    value = re.sub(r"\s+", " ", value)
+    return value.strip()
+
+
+def make_job_fingerprint(company: str, title: str, description: str) -> str:
+    """Create a stable fingerprint for a job listing."""
+    parts = [
+        normalize_job_text(company),
+        normalize_job_text(title),
+        normalize_job_text(description),
+    ]
+    # Don't classify incomplete descriptions as duplicates.
+    if not all(parts):
+        return ""
+
+    raw = "|".join(parts)
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
 
 class JobDatabase:
@@ -63,6 +88,12 @@ class JobDatabase:
             self.connection.execute("ALTER TABLE jobs ADD COLUMN action_at TEXT")
         if "action_note" not in columns:
             self.connection.execute("ALTER TABLE jobs ADD COLUMN action_note TEXT")
+        if "cv_path" not in columns:
+            self.connection.execute("ALTER TABLE jobs ADD COLUMN cv_path TEXT")
+        if "content_hash" not in columns:
+            self.connection.execute(
+                "ALTER TABLE jobs ADD COLUMN content_hash TEXT"
+            )
         self.connection.commit()
 
     def save_job(self, job: Any) -> None:
@@ -73,14 +104,19 @@ class JobDatabase:
 
         tags = job.get("tags") or []
         tags_json = json.dumps(tags, ensure_ascii=False) if isinstance(tags, list) else str(tags)
+        content_hash = make_job_fingerprint(
+            job.get("company", ""),
+            job.get("title", ""),
+            job.get("description", ""),
+        )
 
         self.connection.execute(
             """
             INSERT INTO jobs (
                 url, title, company, location, work_model, date_text,
-                date_published, tags_json, description, first_seen, last_seen
+                date_published, tags_json, description, content_hash, first_seen, last_seen
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 
             ON CONFLICT(url) DO UPDATE SET
                 title = excluded.title,
@@ -91,7 +127,8 @@ class JobDatabase:
                 date_published = excluded.date_published,
                 tags_json = excluded.tags_json,
                 description = excluded.description,
-                last_seen = excluded.last_seen
+                last_seen = excluded.last_seen,
+                content_hash = excluded.content_hash
             """,
             (
                 job.get("url", ""),
@@ -103,6 +140,7 @@ class JobDatabase:
                 job.get("date_published", ""),
                 tags_json,
                 job.get("description", ""),
+                content_hash,
                 now,
                 now,
             ),
@@ -127,6 +165,47 @@ class JobDatabase:
     def known_urls(self) -> Set[str]:
         """All job URLs already stored. Used by the scraper to skip known jobs."""
         return {row[0] for row in self.connection.execute("SELECT url FROM jobs")}
+
+    
+    def find_duplicate_url(
+        self,
+        company: str,
+        title: str,
+        description: str,
+        exclude_url: Optional[str] = None,
+    ) -> Optional[str]:
+        """Return the URL of an existing identical job, if found."""
+        fingerprint = make_job_fingerprint(company, title, description)
+        if not fingerprint:
+            return None
+
+        rows = self.connection.execute(
+            """
+            SELECT url, company, title, description
+            FROM jobs
+            WHERE content_hash = ?
+            """,
+            (fingerprint,),
+        ).fetchall()
+
+        # Also compare older database records that don't have a hash yet.
+        if not rows:
+            rows = self.connection.execute(
+                "SELECT url, company, title, description FROM jobs"
+            ).fetchall()
+
+        for url, db_company, db_title, db_description in rows:
+            if url == exclude_url:
+                continue
+
+            existing_hash = make_job_fingerprint(
+                db_company, db_title, db_description
+            )
+            if existing_hash and existing_hash == fingerprint:
+                return url
+
+        return None
+
 
     def has_action(self, url: str) -> bool:
         """True if the job already has a recorded action (evaluated/applied/skipped)."""
@@ -190,6 +269,20 @@ class JobDatabase:
         )
         columns = [c[0] for c in cursor.description]
         return [dict(zip(columns, row)) for row in cursor.fetchall()]
+
+    def set_cv_path(self, urls: Iterable[str], cv_path: str) -> int:
+        """Remember which CV to use for these jobs (set when they are scraped)."""
+        cursor = self.connection.executemany(
+            "UPDATE jobs SET cv_path = ? WHERE url = ?", [(cv_path, u) for u in urls]
+        )
+        self.connection.commit()
+        return cursor.rowcount
+
+    def get_cv_path(self, url: str) -> Optional[str]:
+        row = self.connection.execute(
+            "SELECT cv_path FROM jobs WHERE url = ?", (url,)
+        ).fetchone()
+        return row[0] if row and row[0] else None
 
     def get_action(self, url: str) -> Optional[str]:
         row = self.connection.execute(

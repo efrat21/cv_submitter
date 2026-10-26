@@ -621,6 +621,23 @@ class DevBgScraper:
 
         return requirements[:30], benefits[:30]
 
+
+    @staticmethod
+    def normalize_for_deduplication(value: str) -> str:
+        """Normalize text so whitespace and capitalization don't affect matching."""
+        value = (value or "").lower()
+        value = re.sub(r"\s+", " ", value)
+        return value.strip()
+
+    @classmethod
+    def get_duplicate_key(cls, job: Job) -> tuple:
+        """Identify likely duplicate listings by company, title and description."""
+        company = cls.normalize_for_deduplication(job.company)
+        title = cls.normalize_for_deduplication(job.title)
+        description = cls.normalize_for_deduplication(job.description)
+
+        return company, title, description
+
     def run(self, start_url: str, database: Any = None) -> List[Job]:
         """
         Execute the scraper. If database is supplied, saves jobs to the database.
@@ -643,11 +660,30 @@ class DevBgScraper:
                 print(f"\nDiscovered {len(job_urls)} jobs.")
 
                 scraped_jobs: List[Job] = []
+                seen_job_keys = set()
+
 
                 for number, url in enumerate(job_urls, start=1):
                     try:
                         job = self.scrape_job(page, url)
-                        scraped_jobs.append(job)
+
+                        duplicate_url = None
+                        if database is not None and hasattr(
+                            database, "find_duplicate_url"
+                        ):
+                            duplicate_url = database.find_duplicate_url(
+                                company=job.company,
+                                title=job.title,
+                                description=job.description,
+                                exclude_url=job.url,
+                            )
+
+                        if duplicate_url:
+                            print(
+                                f"[DUPLICATE SKIPPED] {job.company} - "
+                                f"{job.title}; matches {duplicate_url}"
+                            )
+                            continue
 
                         if database is not None and hasattr(database, "save_job"):
                             try:
