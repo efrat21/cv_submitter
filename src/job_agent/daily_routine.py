@@ -34,14 +34,14 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
-from job_agent.config import DATA_DIR
-from job_agent.database import JobDatabase
-from job_agent.devbg.scraper import DevBgScraper
-from job_agent.llm.cover_letter import CoverLetterAgent
-from job_agent.llm.decision_agent import DecisionAgent
-from job_agent.llm.evaluator import assess_job
-from job_agent.models import CandidatePreferences, CandidateProfile, Job
-from job_agent.review import letter_path_for, review_applications
+from src.job_agent.config import DATA_DIR
+from src.job_agent.database import JobDatabase
+from src.job_agent.devbg.scraper import DevBgScraper
+from src.job_agent.llm.cover_letter import CoverLetterAgent
+from src.job_agent.llm.decision_agent import DecisionAgent
+from src.job_agent.llm.evaluator import assess_job
+from src.job_agent.models import CandidatePreferences, CandidateProfile, Job
+from src.job_agent.review import letter_path_for, review_applications
 
 DEFAULT_URLS_FILE = "data/daily_urls.txt"
 
