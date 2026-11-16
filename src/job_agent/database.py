@@ -73,6 +73,9 @@ CREATE TABLE IF NOT EXISTS job_decisions (
     rationale TEXT,
     model TEXT,
     prompt_version TEXT,
+    confidence INTEGER,
+    details_json TEXT,
+    cover_letter_path TEXT,
     decided_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
     UNIQUE(job_url)
 );
@@ -190,6 +193,19 @@ class JobDatabase:
 
     def _migrate_advanced_schema(self) -> None:
         """Seed the broader job-platform schema without changing the legacy jobs table."""
+        decision_columns = {
+            row[1] for row in self.connection.execute("PRAGMA table_info(job_decisions)")
+        }
+        for column, column_type in (
+            ("confidence", "INTEGER"),
+            ("details_json", "TEXT"),
+            ("cover_letter_path", "TEXT"),
+        ):
+            if column not in decision_columns:
+                self.connection.execute(
+                    f"ALTER TABLE job_decisions ADD COLUMN {column} {column_type}"
+                )
+
         self.connection.execute(
             """
             INSERT OR IGNORE INTO sources (board, domain, recipe, recipe_status)
@@ -421,6 +437,9 @@ class JobDatabase:
         Returns False if the job URL is not in the database.
         """
         timestamp = datetime.now(timezone.utc).isoformat()
+        if not self.has_job(url):
+            return False
+
         cursor = self.connection.execute(
             "UPDATE jobs SET action = ?, action_at = ?, action_note = ? WHERE url = ?",
             (action, timestamp, note, url),
@@ -447,6 +466,65 @@ class JobDatabase:
         )
         self.connection.commit()
         return cursor.rowcount > 0
+
+    def record_evaluation(
+        self,
+        url: str,
+        *,
+        verdict: str,
+        rationale: str,
+        model: str,
+        confidence: int,
+        overrides: List[str],
+        details: Dict[str, Any],
+    ) -> None:
+        """Persist an agent recommendation separately from human job actions."""
+        if not self.has_job(url):
+            raise ValueError(f"Cannot record evaluation for unknown job: {url}")
+        if verdict not in {"APPLY", "SKIP"}:
+            raise ValueError(f"Invalid evaluation verdict: {verdict}")
+        if not 0 <= confidence <= 100:
+            raise ValueError("Evaluation confidence must be between 0 and 100")
+
+        self.connection.execute(
+            """
+            INSERT INTO job_decisions (
+                job_url, verdict, guardrail_overrides, rationale, model,
+                prompt_version, confidence, details_json, decided_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(job_url) DO UPDATE SET
+                verdict = excluded.verdict,
+                guardrail_overrides = excluded.guardrail_overrides,
+                rationale = excluded.rationale,
+                model = excluded.model,
+                prompt_version = excluded.prompt_version,
+                confidence = excluded.confidence,
+                details_json = excluded.details_json,
+                decided_at = excluded.decided_at
+            """,
+            (
+                url,
+                verdict,
+                json.dumps(overrides, ensure_ascii=False),
+                rationale,
+                model,
+                "m4-v1",
+                confidence,
+                json.dumps(details, ensure_ascii=False),
+                datetime.now(timezone.utc).isoformat(),
+            ),
+        )
+        self.connection.commit()
+
+    def record_cover_letter_path(self, url: str, path: str) -> None:
+        """Attach a generated review letter to the latest recommendation."""
+        cursor = self.connection.execute(
+            "UPDATE job_decisions SET cover_letter_path = ? WHERE job_url = ?",
+            (path, url),
+        )
+        if cursor.rowcount == 0:
+            raise ValueError(f"Cannot attach cover letter to unevaluated job: {url}")
+        self.connection.commit()
 
     def get_feedback_history(self, limit: int = 200) -> List[Dict[str, Any]]:
         """Your own decisions (APPLIED / SKIPPED), newest first.

@@ -9,7 +9,7 @@ An autonomous, AI-assisted job discovery, fit evaluation, and application screen
 - **Automated Web Scraping:** Playwright-based crawler that extracts Bulgarian and English job listings, cleans site boilerplate, normalizes tech tags, and skips already-processed jobs.
 - **Two-Stage Fit Evaluation:**
   - **Stage 1 (Deterministic Rules):** Fast keyword and section-weighted heuristic scoring (`evaluator.py`).
-  - **Stage 2 (Local LLM Reasoning via Ollama):** Constrained JSON schema inference with Chain-of-Thought reasoning (`decision_agent.py`).
+  - **Stage 2 (Local LLM Reasoning via Ollama):** Constrained JSON-schema evaluation with a concise rationale (`decision_agent.py`).
 - **Python Safety Guardrails:** Hard programmatic rules (seniority limits, avoided roles, work models, duplicate detection) that enforce conservative `SKIP` outcomes.
 - **Continuous Feedback History Loop:** Human skip reasons are stored in SQLite and automatically injected into subsequent evaluation prompts as few-shot guidance.
 - **Personalized Cover Letters:** High-impact, evidence-grounded cover letters generated via Google Gemini (`gemini-3.8-flash`) and saved to Markdown.
@@ -69,6 +69,17 @@ uv run job-agent-mcp
 ```
 
 The server exposes read-only tools such as `db_stats`, `list_jobs`, `get_job`, `get_feedback_history`, and `get_recent_audit` over stdio transport.
+
+### 5. MCP Evaluation and Review Server
+The workflow server provides evaluation, cover-letter drafts, review packets, and human-confirmed feedback. It is separate from the read-only jobs database server:
+
+```bash
+uv run job-agent-workflow-mcp
+```
+
+It exposes `evaluate_job_fit`, `generate_cover_letter`, `get_application_review`, `review_application`, and `get_decision_feedback` over stdio. Evaluation saves an agent recommendation without changing the human `APPLIED`/`SKIPPED` action. `review_application` asks for explicit human confirmation; this server never submits applications. Cover-letter generation sends the candidate profile and job details to the configured Gemini provider.
+
+The workflow expects `data/candidate_profile.json`, `data/candidate_preferences.json`, a local Ollama service, and `GEMINI_API_KEY` for cover letters. Set `JOB_AGENT_DB_PATH`, `JOB_AGENT_PROFILE_PATH`, `JOB_AGENT_PREFERENCES_PATH`, or `OLLAMA_MODEL` to override the corresponding defaults.
 
 ---
 

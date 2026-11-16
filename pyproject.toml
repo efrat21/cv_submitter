@@ -15,6 +15,7 @@ dependencies = [
 [project.scripts]
 devbg-scrape = "job_agent.main:main"
 job-agent-mcp = "job_agent.mcp_server:main"
+job-agent-workflow-mcp = "job_agent.mcp_servers.host:main"
 
 [build-system]
 requires = ["hatchling>=1.27"]

@@ -5,7 +5,6 @@ skills and projects to target job postings.
 """
 import time
 import argparse
-from datetime import datetime, timezone
 import json
 import logging
 from pathlib import Path
@@ -13,7 +12,7 @@ import re
 import sqlite3
 from typing import Any, Dict, List, Optional
 
-from ..models import CandidateProfile, CoverLetter, FinalDecision, Job
+from ..models import CandidateProfile, FinalDecision, Job
 
 log = logging.getLogger(__name__)
 from dotenv import load_dotenv
@@ -279,9 +278,9 @@ class CoverLetterAgent:
         job: Job,
         candidate_name: str = "",
         decision_context: Optional[FinalDecision] = None,
-        save_path: str = "",
-        use_factchecker: bool = False
-    ):
+        save_path: str | Path = "",
+        use_factchecker: bool = False,
+    ) -> str:
         # Build the prompt for the cover letter
         prompt = self.build_prompt(profile, job, candidate_name, decision_context)
         # Generate the precheck cover letter
@@ -294,9 +293,10 @@ class CoverLetterAgent:
             cover_letter = precheck_cover_letter
         # save cover letter
         if save_path:
-            save_path = Path(save_path)
-            save_path.parent.mkdir(parents=True, exist_ok=True)
-            save_path.write_text(cover_letter, encoding="utf-8")
+            output_path = Path(save_path)
+            output_path.parent.mkdir(parents=True, exist_ok=True)
+            output_path.write_text(cover_letter, encoding="utf-8")
+        return cover_letter
 
 
 def strip_cover_letter(response:types.GenerateContentResponse):
