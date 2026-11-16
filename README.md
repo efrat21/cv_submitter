@@ -110,3 +110,14 @@ uv run python src/job_agent/main.py --skip_step 1 2
 - **Evidence-Only Experience:** Cover letters and evaluation rationales are strictly grounded in candidate facts from `candidate_profile.json`.
 
 For in-depth architectural details, refer to **[ONBOARDING.md](file:///d:/cv_submitter/ONBOARDING.md)**.
+
+## Board Adapter Layer
+
+The adapter contract and registry are in `src/job_agent/adapters/`.
+`DevBgAdapter` delegates to the existing scraper to preserve its behavior;
+`JobsBgAdapter` extracts job-view pages and listing links. Offline coverage
+uses saved HTML fixtures:
+
+```bash
+uv run pytest tests/test_adapter_parity.py tests/test_jobsbg_adapter.py -q
+```

@@ -28,8 +28,13 @@ cv_submitter/
 │       ├── dashboard.py           # Analytics dashboard
 │       ├── debug_decision.py      # Single-job trace and debugger
 │       ├── cv_parser.py           # Evidence-based CV extractor
+│       ├── adapters/
+│       │   ├── base.py         # Shared BoardAdapter protocol
+│       │   ├── devbg_adapter.py # Compatibility adapter over DevBgScraper
+│       │   ├── jobsbg_adapter.py # Jobs.bg listing and job-page adapter
+│       │   └── registry.py     # Board-name and domain lookup
 │       ├── devbg/
-│       │   ├── scraper.py         # Playwright DEV.BG scraper
+│       │   ├── scraper.py      # Playwright DEV.BG scraper
 │       │   └── application.py     # Playwright browser form-filler
 │       ├── llm/
 │       │   ├── evaluator.py       # Stage 1 rule-based matcher
@@ -53,8 +58,11 @@ cv_submitter/
 │   ├── test_playwright.py         # Browser automation smoke tests
 │   ├── test_scraper.py           # Scraper validation and fixtures
 │   ├── test_migration.py         # Database migration + audit table validation
+│   ├── test_adapter_parity.py    # Offline DEV.BG golden/parity tests
+│   ├── test_jobsbg_adapter.py    # Offline Jobs.bg extraction tests
 │   └── fixtures/
-│       └── sample_pages/         # Saved HTML for board-specific extraction fixtures
+│       └── devbg/                # Saved DEV.BG listing and job pages
+│       └── jobsbg/               # Saved Jobs.bg listing and job pages
 │
 ├── screenshots/                  # Browser/session screenshots and review artifacts
 │
