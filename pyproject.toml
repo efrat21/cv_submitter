@@ -5,6 +5,7 @@ description = "Autonomous DEV.BG job application agent"
 requires-python = ">=3.11"
 dependencies = [
     "google-genai>=2.31.0",
+    "mcp>=1.9.0",
     "ollama>=0.6.3",
     "openai>=3.31.0",
     "playwright>=1.55,<2.0",
@@ -13,6 +14,7 @@ dependencies = [
 
 [project.scripts]
 devbg-scrape = "job_agent.main:main"
+job-agent-mcp = "job_agent.mcp_server:main"
 
 [build-system]
 requires = ["hatchling>=1.27"]
@@ -20,3 +22,8 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/job_agent"]
+
+[dependency-groups]
+dev = [
+    "pytest>=9.2.0",
+]

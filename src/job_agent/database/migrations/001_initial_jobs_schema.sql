@@ -1,0 +1,1 @@
+-- Not implemented yet.\n-- Initial schema for the legacy jobs table.\n

@@ -44,6 +44,96 @@ CREATE INDEX IF NOT EXISTS idx_jobs_action
 ON jobs(action);
 """
 
+ADVANCED_SCHEMA = """
+CREATE TABLE IF NOT EXISTS sources (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    board TEXT NOT NULL,
+    domain TEXT,
+    recipe TEXT,
+    recipe_status TEXT NOT NULL DEFAULT 'legacy',
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(board, domain)
+);
+
+CREATE TABLE IF NOT EXISTS listings (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    url TEXT NOT NULL UNIQUE,
+    source TEXT NOT NULL,
+    cv_mapping TEXT,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS job_decisions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    job_url TEXT NOT NULL,
+    verdict TEXT,
+    guardrail_overrides TEXT,
+    rationale TEXT,
+    model TEXT,
+    prompt_version TEXT,
+    decided_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(job_url)
+);
+
+CREATE TABLE IF NOT EXISTS applications (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    job_url TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'APPLIED',
+    cv_path TEXT,
+    cover_letter_path TEXT,
+    applied_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(job_url)
+);
+
+CREATE TABLE IF NOT EXISTS emails (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    message_id TEXT NOT NULL UNIQUE,
+    thread_id TEXT,
+    job_url TEXT,
+    sender TEXT,
+    subject TEXT,
+    classification TEXT,
+    received_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    raw_snippet TEXT
+);
+
+CREATE TABLE IF NOT EXISTS interviews (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    application_id INTEGER,
+    job_url TEXT,
+    scheduled_for TEXT,
+    timezone TEXT,
+    interview_format TEXT,
+    meeting_link TEXT,
+    contact_person TEXT,
+    calendar_event_id TEXT,
+    confirmed INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS audit_log (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    timestamp TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    actor TEXT NOT NULL DEFAULT 'system',
+    event_type TEXT NOT NULL,
+    tool_name TEXT,
+    details_json TEXT,
+    approval_required INTEGER NOT NULL DEFAULT 0,
+    approved INTEGER NOT NULL DEFAULT 0,
+    approval_reference TEXT
+);
+
+CREATE TABLE IF NOT EXISTS job_status_history (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    job_url TEXT NOT NULL,
+    status TEXT NOT NULL,
+    note TEXT,
+    recorded_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+"""
+
 def normalize_job_text(value: str) -> str:
     """Normalize text for duplicate comparison."""
     value = (value or "").lower()
@@ -74,7 +164,9 @@ class JobDatabase:
         self.connection = sqlite3.connect(self.path, check_same_thread=False)
         self._migrate()
         self.connection.executescript(SCHEMA)
+        self.connection.executescript(ADVANCED_SCHEMA)
         self.connection.commit()
+        self._migrate_advanced_schema()
 
     def _migrate(self) -> None:
         columns = {
@@ -95,6 +187,84 @@ class JobDatabase:
                 "ALTER TABLE jobs ADD COLUMN content_hash TEXT"
             )
         self.connection.commit()
+
+    def _migrate_advanced_schema(self) -> None:
+        """Seed the broader job-platform schema without changing the legacy jobs table."""
+        self.connection.execute(
+            """
+            INSERT OR IGNORE INTO sources (board, domain, recipe, recipe_status)
+            VALUES ('devbg', 'dev.bg', NULL, 'legacy')
+            """
+        )
+        self.connection.execute(
+            """
+            INSERT OR IGNORE INTO listings (url, source, cv_mapping)
+            SELECT j.url, 'devbg', j.cv_path
+            FROM jobs j
+            LEFT JOIN listings l ON l.url = j.url
+            WHERE l.url IS NULL
+            """
+        )
+        self.connection.commit()
+
+    def record_audit_event(
+        self,
+        event_type: str,
+        *,
+        actor: str = "system",
+        tool_name: Optional[str] = None,
+        details: Optional[Dict[str, Any]] = None,
+        approval_required: bool = False,
+        approved: bool = False,
+        approval_reference: Optional[str] = None,
+    ) -> int:
+        """Persist a structured audit record for tool calls and approvals."""
+        cursor = self.connection.execute(
+            """
+            INSERT INTO audit_log (
+                actor, event_type, tool_name, details_json,
+                approval_required, approved, approval_reference
+            ) VALUES (?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                actor,
+                event_type,
+                tool_name,
+                json.dumps(details or {}, ensure_ascii=False),
+                int(bool(approval_required)),
+                int(bool(approved)),
+                approval_reference,
+            ),
+        )
+        self.connection.commit()
+        return cursor.lastrowid
+
+    def list_jobs(self, limit: int = 50, action: Optional[str] = None) -> List[Dict[str, Any]]:
+        query = """
+            SELECT * FROM jobs
+            WHERE (? IS NULL OR action = ?)
+            ORDER BY id DESC
+            LIMIT ?
+        """
+        params: tuple[Any, ...] = (action, action, limit)
+        rows = self.connection.execute(query, params).fetchall()
+        columns = [c[0] for c in self.connection.execute("SELECT * FROM jobs LIMIT 0").description]
+        return [dict(zip(columns, row)) for row in rows]
+
+    def get_audit_events(self, limit: int = 50) -> List[Dict[str, Any]]:
+        cursor = self.connection.execute(
+            """
+            SELECT timestamp, actor, event_type, tool_name, details_json,
+                   approval_required, approved, approval_reference
+            FROM audit_log
+            ORDER BY id DESC
+            LIMIT ?
+            """,
+            (limit,),
+        )
+        rows = cursor.fetchall()
+        columns = [c[0] for c in cursor.description]
+        return [dict(zip(columns, row)) for row in rows]
 
     def save_job(self, job: Any) -> None:
         if hasattr(job, "to_dict"):
@@ -144,6 +314,13 @@ class JobDatabase:
                 now,
                 now,
             ),
+        )
+        self.connection.execute(
+            """
+            INSERT OR IGNORE INTO listings (url, source, cv_mapping)
+            VALUES (?, 'devbg', ?)
+            """,
+            (job.get("url", ""), job.get("cv_path") or None),
         )
 
         self.connection.commit()
@@ -243,9 +420,30 @@ class JobDatabase:
         it is fed back to the decision agent as preference history.
         Returns False if the job URL is not in the database.
         """
+        timestamp = datetime.now(timezone.utc).isoformat()
         cursor = self.connection.execute(
             "UPDATE jobs SET action = ?, action_at = ?, action_note = ? WHERE url = ?",
-            (action, datetime.now(timezone.utc).isoformat(), note, url),
+            (action, timestamp, note, url),
+        )
+        self.connection.execute(
+            """
+            INSERT INTO job_status_history (job_url, status, note, recorded_at)
+            VALUES (?, ?, ?, ?)
+            """,
+            (url, action, note, timestamp),
+        )
+        self.connection.execute(
+            """
+            INSERT INTO job_decisions (job_url, verdict, rationale, model, prompt_version, decided_at)
+            VALUES (?, ?, ?, 'legacy', 'legacy', ?)
+            ON CONFLICT(job_url) DO UPDATE SET
+                verdict = excluded.verdict,
+                rationale = excluded.rationale,
+                model = excluded.model,
+                prompt_version = excluded.prompt_version,
+                decided_at = excluded.decided_at
+            """,
+            (url, action, note or "legacy action", timestamp),
         )
         self.connection.commit()
         return cursor.rowcount > 0

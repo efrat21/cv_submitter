@@ -61,6 +61,15 @@ uv run python src/job_agent/main.py \
     --model qwen2.5:7b
 ```
 
+### 4. MCP Jobs DB Server (read-only foundation)
+The deterministic job store is now exposed as an MCP server for orchestration clients while keeping the legacy CLI flow intact.
+
+```bash
+uv run job-agent-mcp
+```
+
+The server exposes read-only tools such as `db_stats`, `list_jobs`, `get_job`, `get_feedback_history`, and `get_recent_audit` over stdio transport.
+
 ---
 
 ## Workflow & Step Skipping

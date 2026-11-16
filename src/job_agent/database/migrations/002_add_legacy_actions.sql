@@ -1,0 +1,1 @@
+-- Not implemented yet.\n-- Migration for legacy action fields and history columns.\n
