@@ -29,10 +29,14 @@ cv_submitter/
 │       ├── debug_decision.py      # Single-job trace and debugger
 │       ├── cv_parser.py           # Evidence-based CV extractor
 │       ├── adapters/
-│       │   ├── base.py         # Shared BoardAdapter protocol
-│       │   ├── devbg_adapter.py # Compatibility adapter over DevBgScraper
-│       │   ├── jobsbg_adapter.py # Jobs.bg listing and job-page adapter
-│       │   └── registry.py     # Board-name and domain lookup
+│       │   ├── base.py             # Shared BoardAdapter protocol
+│       │   ├── devbg_adapter.py    # Compatibility adapter over DevBgScraper
+│       │   ├── jobsbg_adapter.py   # Jobs.bg listing and job-page adapter
+│       │   ├── linkedin_adapter.py # Public LinkedIn jobs adapter
+│       │   ├── generic_adapter.py # JSON-LD-first generic adapter
+│       │   ├── jsonld_adapter.py   # Schema.org JobPosting extraction
+│       │   ├── recipe_adapter.py   # Reusable CSS-selector extraction recipes
+│       │   └── registry.py         # Board-name and domain lookup
 │       ├── devbg/
 │       │   ├── scraper.py      # Playwright DEV.BG scraper
 │       │   └── application.py     # Playwright browser form-filler
@@ -60,9 +64,12 @@ cv_submitter/
 │   ├── test_migration.py         # Database migration + audit table validation
 │   ├── test_adapter_parity.py    # Offline DEV.BG golden/parity tests
 │   ├── test_jobsbg_adapter.py    # Offline Jobs.bg extraction tests
+│   ├── test_generic_adapters.py  # JSON-LD, recipes, and LinkedIn tests
 │   └── fixtures/
-│       └── devbg/                # Saved DEV.BG listing and job pages
-│       └── jobsbg/               # Saved Jobs.bg listing and job pages
+│       ├── devbg/                 # Saved DEV.BG listing and job pages
+│       ├── jobsbg/                # Saved Jobs.bg listing and job pages
+│       ├── generic/               # Generic JSON-LD and recipe fixtures
+│       └── linkedin/              # LinkedIn public job and listing fixtures
 │
 ├── screenshots/                  # Browser/session screenshots and review artifacts
 │

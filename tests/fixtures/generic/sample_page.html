@@ -1,1 +1,36 @@
-<html><body>generic sample fixture placeholder</body></html>\n
+<!doctype html>
+<html lang="en">
+  <head>
+    <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@graph": [
+          {"@type": "Organization", "name": "Example"},
+          {
+            "@type": "JobPosting",
+            "title": "Platform Engineer",
+            "description": "<p>Build reliable services.</p><ul><li>Python</li><li>APIs</li></ul>",
+            "hiringOrganization": {"@type": "Organization", "name": "Example Corp"},
+            "jobLocation": {
+              "@type": "Place",
+              "address": {
+                "@type": "PostalAddress",
+                "addressLocality": "Sofia",
+                "addressCountry": "BG"
+              }
+            },
+            "employmentType": ["FULL_TIME", "CONTRACTOR"],
+            "datePosted": "2026-10-26",
+            "qualifications": "<ul><li>Strong Python skills</li><li>API experience</li></ul>",
+            "jobBenefits": "Flexible schedule",
+            "skills": ["Python", "REST APIs"]
+          }
+        ]
+      }
+    </script>
+    <h1>Fallback title must not be used</h1>
+    <div class="company">Fallback company must not be used</div>
+    <div class="description">Fallback description must not be used</div>
+  </head>
+  <body></body>
+</html>

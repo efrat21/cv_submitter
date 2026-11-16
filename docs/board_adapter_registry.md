@@ -4,7 +4,7 @@ The adapter layer gives each job board a common interface while leaving the
 existing DEV.BG scraping behavior in place. The contract is defined by
 [`BoardAdapter`](../src/job_agent/adapters/base.py), and
 [`AdapterRegistry`](../src/job_agent/adapters/registry.py) resolves adapters
-by board name or exact URL hostname.
+by board name, exact hostname, or an explicitly registered wildcard domain.
 
 ## DEV.BG adapter
 
@@ -22,10 +22,31 @@ new_urls = adapter.discover_listing_urls(page, listing_url, known_urls)
 ```
 
 `normalize` accepts either an existing `Job` or a mapping and returns a `Job`.
-The registry's `create_default_registry()` factory registers the DEV.BG
-adapter; `get("devbg")` resolves by board name and `for_url(url)` resolves by
-hostname. Unknown names or hosts raise `KeyError`; duplicate names or domains
-raise `ValueError`.
+The registry's `create_default_registry()` factory registers DEV.BG, Jobs.bg,
+and LinkedIn; `get(board_name)` resolves by board name and `for_url(url)`
+resolves by hostname. Unknown names or hosts raise `KeyError`; duplicate names
+or domains raise `ValueError`.
+
+## Generic extraction and recipes
+
+[`GenericAdapter`](../src/job_agent/adapters/generic_adapter.py) loads a
+posting once and tries Schema.org `JobPosting` JSON-LD first. It traverses
+single objects, lists, and `@graph`, normalizes common fields into `Job`, and
+raises an explicit error when required structured fields are missing and no
+recipe can recover them. If no usable JobPosting block exists, it uses an optional
+[`ExtractionRecipe`](../src/job_agent/adapters/recipe_adapter.py), a
+JSON-serializable set of CSS selectors for required and optional fields.
+Recipes are reusable, board-specific selectors learned from observed markup;
+they are configuration, not an automatic model-training system.
+
+## LinkedIn adapter
+
+[`LinkedInAdapter`](../src/job_agent/adapters/linkedin_adapter.py) uses the
+generic JSON-LD-first flow with a selector recipe for LinkedIn's public job
+pages. It recognizes regional `*.linkedin.com` hosts for public job URLs and
+search results. It does not sign in, submit applications, or bypass access
+controls. Listing discovery processes the page provided and does not paginate
+automatically.
 
 ## Adding a board
 
@@ -54,4 +75,10 @@ Jobs.bg being reachable during test runs:
 
 ```bash
 uv run pytest tests/test_jobsbg_adapter.py -q
+```
+
+Run the generic JSON-LD/recipe and LinkedIn fixture validation with:
+
+```bash
+uv run pytest tests/test_generic_adapters.py -q
 ```

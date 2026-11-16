@@ -115,9 +115,10 @@ For in-depth architectural details, refer to **[ONBOARDING.md](file:///d:/cv_sub
 
 The adapter contract and registry are in `src/job_agent/adapters/`.
 `DevBgAdapter` delegates to the existing scraper to preserve its behavior;
-`JobsBgAdapter` extracts job-view pages and listing links. Offline coverage
-uses saved HTML fixtures:
+`JobsBgAdapter` handles Jobs.bg pages; and the generic JSON-LD-first adapter
+supports selector recipes, including public LinkedIn job pages. Offline
+coverage uses saved HTML fixtures:
 
 ```bash
-uv run pytest tests/test_adapter_parity.py tests/test_jobsbg_adapter.py -q
+uv run pytest tests/test_adapter_parity.py tests/test_jobsbg_adapter.py tests/test_generic_adapters.py -q
 ```

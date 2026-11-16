@@ -27,8 +27,10 @@ class AdapterRegistry:
             raise ValueError(f"Adapter already registered: {adapter.board_name}")
 
         normalized_domains = tuple(
-            domain.casefold().removeprefix("www.")
-            for domain in (domains if domains is not None else adapter.domains)
+            dict.fromkeys(
+                self._normalize_domain(domain)
+                for domain in (domains if domains is not None else adapter.domains)
+            )
         )
         duplicates = [domain for domain in normalized_domains if domain in self._domains]
         if duplicates:
@@ -46,20 +48,41 @@ class AdapterRegistry:
             raise KeyError(f"No adapter registered for board: {board_name}") from exc
 
     def for_url(self, url: str) -> BoardAdapter:
-        """Return the adapter matching a URL's exact hostname."""
+        """Return an exact or explicitly wildcard-registered hostname match."""
         hostname = (urlparse(url).hostname or "").casefold().removeprefix("www.")
-        try:
-            return self._domains[hostname]
-        except KeyError as exc:
-            raise KeyError(f"No adapter registered for URL: {url}") from exc
+        adapter = self._domains.get(hostname)
+        if adapter is not None:
+            return adapter
+
+        wildcard_domains = sorted(
+            (
+                domain
+                for domain in self._domains
+                if domain.startswith("*.") and hostname.endswith(domain[1:])
+            ),
+            key=len,
+            reverse=True,
+        )
+        if wildcard_domains:
+            return self._domains[wildcard_domains[0]]
+        raise KeyError(f"No adapter registered for URL: {url}")
+
+    @staticmethod
+    def _normalize_domain(domain: str) -> str:
+        normalized = domain.casefold().rstrip(".")
+        if normalized.startswith("*."):
+            return f"*.{normalized[2:].removeprefix('www.')}"
+        return normalized.removeprefix("www.")
 
 
 def create_default_registry() -> AdapterRegistry:
     """Create the registry containing the supported board adapters."""
     from job_agent.adapters.devbg_adapter import DevBgAdapter
     from job_agent.adapters.jobsbg_adapter import JobsBgAdapter
+    from job_agent.adapters.linkedin_adapter import LinkedInAdapter
 
     registry = AdapterRegistry()
     registry.register(DevBgAdapter())
     registry.register(JobsBgAdapter())
+    registry.register(LinkedInAdapter(), domains=("linkedin.com", "*.linkedin.com"))
     return registry
