@@ -21,6 +21,7 @@ job-agent-mcp = "job_agent.mcp_server:main"
 job-agent-workflow-mcp = "job_agent.mcp_servers.host:main"
 job-agent-tracking-mcp = "job_agent.mcp_servers.tracking_host:main"
 job-agent-daily-digest = "job_agent.daily_digest:main"
+job-agent = "job_agent.cli:main"
 
 [build-system]
 requires = ["hatchling>=1.27"]

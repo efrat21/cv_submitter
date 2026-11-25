@@ -16,6 +16,9 @@ An autonomous, AI-assisted job discovery, fit evaluation, and application screen
 - **Email and Interview Tracking:** Read-only Gmail sync classifies application updates, matches messages conservatively to applied jobs, and prepares editable interview proposals.
 - **Human-Gated Calendar Events:** Interview events are written to Google Calendar only after explicit MCP elicitation; events have no attendees and do not send invitations.
 - **Local Daily Digest:** A local CLI/MCP digest summarizes new email, proposals needing review, and upcoming confirmed interviews. It is never emailed.
+- **Natural-Language MCP Host:** `job-agent chat` connects the jobs, workflow, and tracking MCP servers. Tool access is allowlisted; application and calendar changes remain behind human confirmations.
+- **Scheduled Daily Preparation:** `job-agent daily` prepares jobs without opening the review UI, syncs Gmail, and prints the digest locally. The Windows scheduled task uses this non-interactive path.
+- **Decision Regression Harness:** `job-agent evaluate-regressions` compares fresh model decisions with stored human decisions and separately reports consistency with legacy agent rejections. It does not update the database.
 - **Human-in-the-Loop Browser Automation:** Playwright launches a visible browser, accepts cookies, dismisses popups, opens application forms, prefills details, and uploads the CV—leaving final submission safely to human review.
 - **Real-Time Analytics Dashboard:** ASCII terminal dashboard displaying conversion rates, application statuses, and top target companies.
 
@@ -73,6 +76,12 @@ uv run job-agent-mcp
 
 The server exposes read-only tools such as `db_stats`, `list_jobs`, `get_job`, `get_feedback_history`, and `get_recent_audit` over stdio transport.
 
+This is an MCP backend, not an interactive command: when run by itself, it
+waits quietly for an MCP client on stdin/stdout. To use the assistant, run
+`uv run job-agent chat`; it starts the jobs, workflow, and tracking servers
+automatically. Use `job-agent-mcp` directly only when configuring another MCP
+client to launch it.
+
 ### 5. MCP Evaluation and Review Server
 The workflow server provides evaluation, cover-letter drafts, review packets, and human-confirmed feedback. It is separate from the read-only jobs database server:
 
@@ -102,6 +111,64 @@ uv run job-agent-daily-digest
 ```
 
 Set `JOB_AGENT_GMAIL_TOKEN_PATH` and `JOB_AGENT_CALENDAR_TOKEN_PATH` to change the separate OAuth token locations.
+
+### 7. Agent Host and Scheduling
+
+Start interactive natural-language control (local Ollama by default):
+
+```bash
+uv run job-agent chat
+```
+
+The host starts only the configured local MCP servers and exposes an allowlist
+of their tools. Job postings and email text returned by those tools are treated
+as untrusted data. Review and calendar tools retain their in-band confirmation
+prompts; cover-letter generation asks before sending candidate/job data to
+Gemini.
+Boolean consent prompts can be answered `y`; multi-field review forms accept a
+JSON object matching the fields shown in the terminal.
+
+Run the unattended daily preparation and local digest:
+
+```bash
+uv run job-agent daily --name "Your Name" --email "you@example.com"
+```
+
+This runs the existing routine with `--no-review`, then syncs Gmail and prints
+the digest. Remote cover-letter generation is off by default; enabling
+`--allow-remote-letters` sends candidate profile and job details to Gemini.
+It does not submit applications, approve calendar events, or email the digest.
+For a digest without job preparation or Gmail access, use
+`--skip-job-prep --skip-email-sync`.
+
+Configure the chat model with `JOB_AGENT_AGENT_PROVIDER=ollama` (default),
+`JOB_AGENT_AGENT_MODEL`, and `OLLAMA_HOST`. An OpenAI-compatible provider can
+be selected with `JOB_AGENT_AGENT_PROVIDER=openai-compatible`, with
+`JOB_AGENT_AGENT_BASE_URL` and `JOB_AGENT_AGENT_MODEL`. Remote endpoints are
+blocked unless `JOB_AGENT_ALLOW_REMOTE_AGENT_DATA=true` is set; enabling this
+allows chat content and MCP results, potentially including candidate and email
+data, to leave the machine. Keep `OPENAI_API_KEY` in the environment, not in
+the repository. The daily task does not use this chat provider.
+
+Evaluate stored decisions without changing them:
+
+```bash
+uv run job-agent evaluate-regressions
+```
+
+The harness uses `APPLIED`/`SKIPPED` as human reference labels, excludes each
+case from its own history examples, and reports `NOT_RECOMMENDED` cases
+separately as legacy-agent consistency checks.
+
+Register or update the Windows daily task (it runs preparation only; review
+remains interactive and remote cover letters are off by default):
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\setup_daily_task.ps1 -Name "Your Name" -Email "you@example.com"
+```
+
+Use `-AllowRemoteLetters` only if you explicitly want the scheduled run to
+send candidate profile and job details to Gemini when drafting letters.
 
 ---
 

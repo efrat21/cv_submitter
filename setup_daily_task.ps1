@@ -1,6 +1,7 @@
 <#
-Registers a Windows scheduled task that opens a terminal window by itself every
-day and runs the daily job routine in it (you answer the prompts there).
+Registers a Windows scheduled task that prepares the daily job queue, syncs
+application email, and prints a local digest. It does not open the review UI or
+approve applications/calendar events.
 
 Run once from your project folder (e.g. D:\cv_submitter):
     powershell -ExecutionPolicy Bypass -File .\setup_daily_task.ps1 -Name "Your Name" -Email "you@mail.com"
@@ -18,34 +19,38 @@ param(
     [string]$Time = "09:00",
     [string]$Name = "",
     [string]$Email = "",
-    [string]$TaskName = "JobAgentDaily"
+    [string]$TaskName = "JobAgentDaily",
+    [switch]$AllowRemoteLetters
 )
 
 $ErrorActionPreference = "Stop"
 
-# --- write the launcher the task will run -----------------------------------
+if ($ProjectDir -match '["&|<>^%!()]' -or $Name -match '["&|<>^%!()]' -or $Email -match '["&|<>^%!()]') {
+    throw "ProjectDir, Name, and Email cannot contain cmd.exe metacharacters."
+}
+
+# --- write the non-interactive launcher the task will run -------------------
 $bat = Join-Path $ProjectDir "run_daily.bat"
 $lines = @(
     '@echo off',
-    'title Job Agent - Daily Routine',
+    'title Job Agent - Daily Preparation',
     'cd /d "{0}"' -f $ProjectDir,
     'set "PYTHONPATH={0}\src;%PYTHONPATH%"' -f $ProjectDir,
     ':: start Ollama if it is not running yet',
     'tasklist /FI "IMAGENAME eq ollama.exe" | find /I "ollama.exe" >nul || (start "" /min ollama serve & timeout /t 8 /nobreak >nul)'
 )
 $lines += 'call ".venv\Scripts\activate.bat"'
-$lines += @(
-    ('python -m job_agent.daily_routine --name "{0}" --email "{1}"' -f $Name, $Email),
-    'echo.',
-    'echo Routine finished. Press any key to close this window.',
-    'pause >nul'
-)
+$dailyCommand = 'python -m job_agent.cli.host daily --name "{0}" --email "{1}"' -f $Name, $Email
+if ($AllowRemoteLetters) {
+    $dailyCommand += ' --allow-remote-letters'
+}
+$lines += $dailyCommand
 $lines | Set-Content -Path $bat -Encoding ASCII
 Write-Host "Wrote launcher: $bat"
 
 
 # --- register the task -------------------------------------------------------
-# Run in the currently logged-in user's desktop session.
+# Run in the currently logged-in user's session so local OAuth credentials work.
 $action = New-ScheduledTaskAction `
     -Execute "$env:WINDIR\System32\cmd.exe" `
     -Argument "/c `"$bat`"" `

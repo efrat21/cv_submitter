@@ -156,7 +156,7 @@ def evaluate_unprocessed(
     print(f"[INFO] {len(rows)} unprocessed job(s) (cap: --max-evaluate {args.max_evaluate}).")
     history = db.get_feedback_history()
     (Path(DATA_DIR) / "cover_letters").mkdir(parents=True, exist_ok=True)
-    letter_agent = CoverLetterAgent()
+    letter_agent = None if args.no_cover_letters else CoverLetterAgent()
 
     for i, row in enumerate(rows, 1):
         job = Job.from_dict(row)
@@ -168,12 +168,18 @@ def evaluate_unprocessed(
                 raise RuntimeError(decision.error)
 
             if decision.decision == "APPLY":
-                path = letter_path_for(job)
-                letter_agent.run(profile=profile, job=job, candidate_name=args.name,
-                                 decision_context=decision, save_path=path)
+                if letter_agent:
+                    path = letter_path_for(job)
+                    letter_agent.run(profile=profile, job=job, candidate_name=args.name,
+                                     decision_context=decision, save_path=path)
+                    print(f"    -> APPLY (conf {decision.confidence}); letter: {path.name}")
+                else:
+                    print(
+                        f"    -> APPLY (conf {decision.confidence}); "
+                        "cover letter skipped (remote generation not enabled)"
+                    )
                 db.record_action(job.url, "RECOMMENDED")
                 stats["recommended"] += 1
-                print(f"    -> APPLY (conf {decision.confidence}); letter: {path.name}")
             else:
                 db.record_action(job.url, "NOT_RECOMMENDED")
                 stats["rejected"] += 1
@@ -234,6 +240,11 @@ def main() -> None:
     ap.add_argument("--wait-until", metavar="HH:MM", help="Sleep until this time (e.g. 09:00), then run once")
     ap.add_argument("--skip-scrape", action="store_true", help="Don't scrape, only evaluate/review")
     ap.add_argument("--no-review", action="store_true", help="Prepare only; don't open the browser")
+    ap.add_argument(
+        "--no-cover-letters",
+        action="store_true",
+        help="Do not send candidate/job data to the configured cover-letter provider",
+    )
     ap.add_argument("--review-only", action="store_true", help="Skip scraping and evaluation")
     args = ap.parse_args()
 

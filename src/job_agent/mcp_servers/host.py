@@ -48,6 +48,15 @@ class HumanReviewResponse(BaseModel):
     )
 
 
+class CoverLetterConsent(BaseModel):
+    confirmed: bool = Field(
+        description=(
+            "Confirm that candidate profile and job details may be sent to the "
+            "configured Gemini provider to draft a cover letter."
+        )
+    )
+
+
 def _open_db() -> JobDatabase:
     path = os.environ.get("JOB_AGENT_DB_PATH")
     return JobDatabase(Path(path) if path else DEFAULT_DB_PATH)
@@ -56,7 +65,6 @@ def _open_db() -> JobDatabase:
 def _record_failure(
     db: JobDatabase,
     tool_name: str,
-    job_url: str,
     error: Exception,
 ) -> None:
     try:
@@ -64,13 +72,15 @@ def _record_failure(
             "tool.failed",
             tool_name=tool_name,
             details={
-                "job_url": job_url,
                 "error_type": type(error).__name__,
-                "error": str(error),
             },
         )
     except sqlite3.Error:
-        log.exception("Could not audit failed tool call %s for %s", tool_name, job_url)
+        log.error(
+            "Could not audit failed tool call %s (%s)",
+            tool_name,
+            type(error).__name__,
+        )
 
 
 @mcp.tool()
@@ -84,15 +94,16 @@ def evaluate_job_fit(job_url: str) -> dict[str, Any]:
     try:
         return run_evaluation(job_url, db)
     except Exception as error:
-        _record_failure(db, "job-agent.evaluate_job_fit", job_url, error)
+        _record_failure(db, "job-agent.evaluate_job_fit", error)
         raise
     finally:
         db.close()
 
 
 @mcp.tool()
-def generate_cover_letter(
+async def generate_cover_letter(
     job_url: str,
+    ctx: Context,
     candidate_name: str = "",
     use_factchecker: bool = False,
 ) -> dict[str, Any]:
@@ -104,6 +115,43 @@ def generate_cover_letter(
     """
     db = _open_db()
     try:
+        packet = build_review_packet(job_url, db)
+        job = packet["job"]
+        response = await ctx.elicit(
+            f"Drafting a cover letter for {job['title']} at {job['company']} "
+            "sends the candidate profile and job details to the configured "
+            "Gemini provider. Confirm this data transfer to continue.",
+            CoverLetterConsent,
+        )
+        if (
+            response.action != "accept"
+            or response.data is None
+            or not response.data.confirmed
+        ):
+            db.record_audit_event(
+                "cover_letter.external_transfer_declined",
+                actor="human",
+                tool_name="job-agent.generate_cover_letter",
+                details={"job_url": job_url, "status": response.action},
+                approval_required=True,
+                approved=False,
+            )
+            return {
+                "job_url": job_url,
+                "generated": False,
+                "status": response.action
+                if response.action != "accept"
+                else "not_confirmed",
+                "external_data_transfer": False,
+            }
+        db.record_audit_event(
+            "cover_letter.external_transfer_approved",
+            actor="human",
+            tool_name="job-agent.generate_cover_letter",
+            details={"job_url": job_url},
+            approval_required=True,
+            approved=True,
+        )
         return generate_letter(
             job_url,
             db,
@@ -111,7 +159,7 @@ def generate_cover_letter(
             use_factchecker=use_factchecker,
         )
     except Exception as error:
-        _record_failure(db, "job-agent.generate_cover_letter", job_url, error)
+        _record_failure(db, "job-agent.generate_cover_letter", error)
         raise
     finally:
         db.close()
@@ -124,7 +172,7 @@ def get_application_review(job_url: str) -> dict[str, Any]:
     try:
         return build_review_packet(job_url, db)
     except Exception as error:
-        _record_failure(db, "job-agent.get_application_review", job_url, error)
+        _record_failure(db, "job-agent.get_application_review", error)
         raise
     finally:
         db.close()
@@ -174,7 +222,7 @@ async def review_application(job_url: str, ctx: Context) -> dict[str, Any]:
             note=response.data.note,
         )
     except Exception as error:
-        _record_failure(db, "job-agent.review_application", job_url, error)
+        _record_failure(db, "job-agent.review_application", error)
         raise
     finally:
         db.close()
