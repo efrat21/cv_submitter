@@ -106,13 +106,19 @@ CREATE TABLE IF NOT EXISTS interviews (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     application_id INTEGER,
     job_url TEXT,
+    email_message_id TEXT,
     scheduled_for TEXT,
     timezone TEXT,
     interview_format TEXT,
     meeting_link TEXT,
     contact_person TEXT,
+    event_title TEXT NOT NULL DEFAULT '',
+    location TEXT,
+    duration_minutes INTEGER NOT NULL DEFAULT 60,
     calendar_event_id TEXT,
     confirmed INTEGER NOT NULL DEFAULT 0,
+    status TEXT NOT NULL DEFAULT 'needs_details',
+    approval_reference TEXT,
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
@@ -205,6 +211,41 @@ class JobDatabase:
                 self.connection.execute(
                     f"ALTER TABLE job_decisions ADD COLUMN {column} {column_type}"
                 )
+
+        email_columns = {
+            row[1] for row in self.connection.execute("PRAGMA table_info(emails)")
+        }
+        for column, column_type in (
+            ("matched_job_url", "TEXT"),
+            ("match_confidence", "INTEGER"),
+        ):
+            if column not in email_columns:
+                self.connection.execute(
+                    f"ALTER TABLE emails ADD COLUMN {column} {column_type}"
+                )
+
+        interview_columns = {
+            row[1] for row in self.connection.execute("PRAGMA table_info(interviews)")
+        }
+        for column, column_type in (
+            ("email_message_id", "TEXT"),
+            ("event_title", "TEXT NOT NULL DEFAULT ''"),
+            ("location", "TEXT"),
+            ("duration_minutes", "INTEGER NOT NULL DEFAULT 60"),
+            ("status", "TEXT NOT NULL DEFAULT 'needs_details'"),
+            ("approval_reference", "TEXT"),
+        ):
+            if column not in interview_columns:
+                self.connection.execute(
+                    f"ALTER TABLE interviews ADD COLUMN {column} {column_type}"
+                )
+        self.connection.execute(
+            """
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_interviews_email_message
+            ON interviews(email_message_id)
+            WHERE email_message_id IS NOT NULL
+            """
+        )
 
         self.connection.execute(
             """
@@ -409,11 +450,25 @@ class JobDatabase:
         return cursor.fetchone() is not None
 
     def get_unprocessed_jobs(self, limit: int) -> List[Dict[str, Any]]:
-        """Newest stored jobs that have no action recorded yet."""
+        """Newest jobs with neither a recorded action nor an evaluation."""
         cursor = self.connection.execute(
             """
             SELECT * FROM jobs
-            WHERE action IS NULL OR action = ''
+            WHERE (action IS NULL OR action = '')
+              AND NOT EXISTS (
+                  SELECT 1
+                  FROM job_decisions d
+                  WHERE d.job_url = jobs.url
+                    AND d.verdict IS NOT NULL
+                    AND d.verdict != ''
+                    AND d.verdict != 'EVAL_ERROR'
+              )
+              AND NOT EXISTS (
+                  SELECT 1
+                  FROM applications a
+                  WHERE a.job_url = jobs.url
+                    AND UPPER(a.status) = 'APPLIED'
+              )
             ORDER BY id DESC
             LIMIT ?
             """,
@@ -421,6 +476,32 @@ class JobDatabase:
         )
         columns = [c[0] for c in cursor.description]
         return [dict(zip(columns, row)) for row in cursor.fetchall()]
+
+    def get_job_processing_state(self, url: str) -> Optional[Dict[str, Any]]:
+        """Return the existing action and evaluation record for a stored job."""
+        row = self.connection.execute(
+            """
+            SELECT j.action, d.verdict, d.details_json, d.rationale,
+                   d.confidence, d.model, d.decided_at, a.status
+            FROM jobs j
+            LEFT JOIN job_decisions d ON d.job_url = j.url
+            LEFT JOIN applications a ON a.job_url = j.url
+            WHERE j.url = ?
+            """,
+            (url,),
+        ).fetchone()
+        if row is None:
+            return None
+        return {
+            "action": row[0],
+            "verdict": row[1],
+            "details_json": row[2],
+            "rationale": row[3],
+            "confidence": row[4],
+            "model": row[5],
+            "decided_at": row[6],
+            "application_status": row[7],
+        }
 
     def count_jobs(self) -> int:
         result = self.connection.execute("SELECT COUNT(*) FROM jobs").fetchone()
@@ -565,3 +646,172 @@ class JobDatabase:
             "SELECT action FROM jobs WHERE url = ?", (url,)
         ).fetchone()
         return row[0] if row else None
+
+    def save_tracked_email(self, email: Dict[str, Any]) -> None:
+        """Store email metadata and a short snippet, never the full message body."""
+        self.connection.execute(
+            """
+            INSERT INTO emails (
+                message_id, thread_id, job_url, sender, subject,
+                classification, received_at, raw_snippet,
+                matched_job_url, match_confidence
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(message_id) DO UPDATE SET
+                thread_id = excluded.thread_id,
+                job_url = COALESCE(excluded.job_url, emails.job_url),
+                sender = excluded.sender,
+                subject = excluded.subject,
+                classification = excluded.classification,
+                received_at = excluded.received_at,
+                raw_snippet = excluded.raw_snippet,
+                matched_job_url = COALESCE(excluded.matched_job_url, emails.matched_job_url),
+                match_confidence = COALESCE(excluded.match_confidence, emails.match_confidence)
+            """,
+            (
+                email["message_id"],
+                email.get("thread_id"),
+                email.get("matched_job_url"),
+                email.get("sender", ""),
+                email.get("subject", ""),
+                email.get("classification", "other"),
+                email.get("received_at") or datetime.now(timezone.utc).isoformat(),
+                (email.get("snippet") or "")[:500],
+                email.get("matched_job_url"),
+                email.get("match_confidence"),
+            ),
+        )
+        self.connection.commit()
+
+    def get_tracked_emails(self, limit: int = 100) -> List[Dict[str, Any]]:
+        cursor = self.connection.execute(
+            """
+            SELECT message_id, thread_id, job_url, sender, subject,
+                   classification, received_at, raw_snippet,
+                   matched_job_url, match_confidence
+            FROM emails
+            ORDER BY received_at DESC, id DESC
+            LIMIT ?
+            """,
+            (limit,),
+        )
+        columns = [column[0] for column in cursor.description]
+        return [dict(zip(columns, row)) for row in cursor.fetchall()]
+
+    def save_interview_proposal(self, proposal: Dict[str, Any]) -> int:
+        """Create or refresh an unconfirmed proposal linked to its source email."""
+        email_message_id = proposal.get("email_message_id")
+        existing = None
+        if email_message_id:
+            existing = self.connection.execute(
+                """
+                SELECT id, status FROM interviews WHERE email_message_id = ?
+                """,
+                (email_message_id,),
+            ).fetchone()
+        if existing and existing[1] in {"scheduled", "creating"}:
+            return int(existing[0])
+
+        values = (
+            proposal.get("job_url"),
+            email_message_id,
+            proposal.get("scheduled_for"),
+            proposal.get("timezone"),
+            proposal.get("interview_format"),
+            proposal.get("meeting_link"),
+            proposal.get("contact_person"),
+            proposal.get("event_title", "Job interview"),
+            proposal.get("location"),
+            proposal.get("duration_minutes", 60),
+            proposal.get("status", "needs_details"),
+        )
+        if existing:
+            self.connection.execute(
+                """
+                UPDATE interviews SET
+                    job_url = ?, scheduled_for = ?, timezone = ?,
+                    interview_format = ?, meeting_link = ?, contact_person = ?,
+                    event_title = ?, location = ?, duration_minutes = ?,
+                    status = ?, confirmed = 0
+                WHERE id = ?
+                """,
+                (*values[:1], *values[2:], int(existing[0])),
+            )
+            interview_id = int(existing[0])
+        else:
+            cursor = self.connection.execute(
+                """
+                INSERT INTO interviews (
+                    job_url, email_message_id, scheduled_for, timezone,
+                    interview_format, meeting_link, contact_person, event_title,
+                    location, duration_minutes, status
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                values,
+            )
+            interview_id = int(cursor.lastrowid)
+        self.connection.commit()
+        return interview_id
+
+    def get_interview(self, interview_id: int) -> Optional[Dict[str, Any]]:
+        cursor = self.connection.execute(
+            """
+            SELECT id, job_url, email_message_id, scheduled_for, timezone,
+                   interview_format, meeting_link, contact_person, event_title,
+                   location, duration_minutes, calendar_event_id, confirmed,
+                   status, approval_reference, created_at
+            FROM interviews WHERE id = ?
+            """,
+            (interview_id,),
+        )
+        row = cursor.fetchone()
+        return dict(zip((column[0] for column in cursor.description), row)) if row else None
+
+    def list_interviews(
+        self, *, status: Optional[str] = None, limit: int = 100
+    ) -> List[Dict[str, Any]]:
+        cursor = self.connection.execute(
+            """
+            SELECT id, job_url, email_message_id, scheduled_for, timezone,
+                   interview_format, meeting_link, contact_person, event_title,
+                   location, duration_minutes, calendar_event_id, confirmed,
+                   status, approval_reference, created_at
+            FROM interviews
+            WHERE (? IS NULL OR status = ?)
+            ORDER BY COALESCE(scheduled_for, created_at), id
+            LIMIT ?
+            """,
+            (status, status, limit),
+        )
+        columns = [column[0] for column in cursor.description]
+        return [dict(zip(columns, row)) for row in cursor.fetchall()]
+
+    def record_scheduled_interview(
+        self,
+        interview_id: int,
+        *,
+        scheduled_for: str,
+        timezone_name: str,
+        duration_minutes: int,
+        calendar_event_id: str,
+        approval_reference: str,
+    ) -> bool:
+        cursor = self.connection.execute(
+            """
+            UPDATE interviews SET
+                scheduled_for = ?, timezone = ?, duration_minutes = ?,
+                calendar_event_id = ?, confirmed = 1, status = 'scheduled',
+                approval_reference = ?
+            WHERE id = ? AND status IN ('needs_details', 'pending_confirmation')
+              AND confirmed = 0
+            """,
+            (
+                scheduled_for,
+                timezone_name,
+                duration_minutes,
+                calendar_event_id,
+                approval_reference,
+                interview_id,
+            ),
+        )
+        self.connection.commit()
+        return cursor.rowcount == 1

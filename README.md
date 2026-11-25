@@ -13,6 +13,9 @@ An autonomous, AI-assisted job discovery, fit evaluation, and application screen
 - **Python Safety Guardrails:** Hard programmatic rules (seniority limits, avoided roles, work models, duplicate detection) that enforce conservative `SKIP` outcomes.
 - **Continuous Feedback History Loop:** Human skip reasons are stored in SQLite and automatically injected into subsequent evaluation prompts as few-shot guidance.
 - **Personalized Cover Letters:** High-impact, evidence-grounded cover letters generated via Google Gemini (`gemini-3.8-flash`) and saved to Markdown.
+- **Email and Interview Tracking:** Read-only Gmail sync classifies application updates, matches messages conservatively to applied jobs, and prepares editable interview proposals.
+- **Human-Gated Calendar Events:** Interview events are written to Google Calendar only after explicit MCP elicitation; events have no attendees and do not send invitations.
+- **Local Daily Digest:** A local CLI/MCP digest summarizes new email, proposals needing review, and upcoming confirmed interviews. It is never emailed.
 - **Human-in-the-Loop Browser Automation:** Playwright launches a visible browser, accepts cookies, dismisses popups, opens application forms, prefills details, and uploads the CV—leaving final submission safely to human review.
 - **Real-Time Analytics Dashboard:** ASCII terminal dashboard displaying conversion rates, application statuses, and top target companies.
 
@@ -77,9 +80,28 @@ The workflow server provides evaluation, cover-letter drafts, review packets, an
 uv run job-agent-workflow-mcp
 ```
 
-It exposes `evaluate_job_fit`, `generate_cover_letter`, `get_application_review`, `review_application`, and `get_decision_feedback` over stdio. Evaluation saves an agent recommendation without changing the human `APPLIED`/`SKIPPED` action. `review_application` asks for explicit human confirmation; this server never submits applications. Cover-letter generation sends the candidate profile and job details to the configured Gemini provider.
+It exposes `evaluate_job_fit`, `generate_cover_letter`, `get_application_review`, `review_application`, and `get_decision_feedback` over stdio. It uses the existing `data/jobs.db`; `JOB_AGENT_DB_PATH` can point both workflow and tracking servers at the same existing database. Evaluation saves an agent recommendation without changing the human `APPLIED`/`SKIPPED` action and skips jobs already evaluated or applied to. `review_application` asks for explicit human confirmation; this server never submits applications. Cover-letter generation sends the candidate profile and job details to the configured Gemini provider.
 
 The workflow expects `data/candidate_profile.json`, `data/candidate_preferences.json`, a local Ollama service, and `GEMINI_API_KEY` for cover letters. Set `JOB_AGENT_DB_PATH`, `JOB_AGENT_PROFILE_PATH`, `JOB_AGENT_PREFERENCES_PATH`, or `OLLAMA_MODEL` to override the corresponding defaults.
+
+### 6. Email and Calendar Tracking
+Create a Google Cloud OAuth desktop client, enable the Gmail API and Google Calendar API, and save its client JSON as `data/google_oauth_client.json` (or set `JOB_AGENT_GOOGLE_OAUTH_CLIENT`). The first Gmail sync and Calendar access each open Google's consent flow and save separate local tokens under `data/`; grant only the requested scopes.
+
+Start the tracking MCP server:
+
+```bash
+uv run job-agent-tracking-mcp
+```
+
+Its tools sync/read Gmail, list tracked email and pending interview proposals, request explicit confirmation before creating calendar events, and return a local-only daily digest. Gmail sync does not mark messages read or change labels. Interview events are private, contain no attendees, and send no invitations. Correct extracted date/time/timezone details during confirmation; missing details must be supplied before an event can be created.
+
+Print the daily digest locally:
+
+```bash
+uv run job-agent-daily-digest
+```
+
+Set `JOB_AGENT_GMAIL_TOKEN_PATH` and `JOB_AGENT_CALENDAR_TOKEN_PATH` to change the separate OAuth token locations.
 
 ---
 

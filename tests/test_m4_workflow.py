@@ -156,6 +156,86 @@ def test_evaluation_errors_are_not_saved_as_skip(tmp_path: Path) -> None:
         db.close()
 
 
+@pytest.mark.parametrize(
+    ("processed_action", "stored_verdict", "application_status", "skip_reason"),
+    [
+        ("APPLIED", None, None, "already_applied"),
+        (None, "APPLY", None, "already_processed"),
+        (None, None, "APPLIED", "already_applied"),
+    ],
+)
+def test_evaluation_does_not_repeat_processed_jobs(
+    tmp_path: Path,
+    processed_action: str | None,
+    stored_verdict: str | None,
+    application_status: str | None,
+    skip_reason: str,
+) -> None:
+    db = _database(tmp_path)
+    if processed_action:
+        db.record_action(JOB_URL, processed_action)
+        # Simulate the legacy database where human application status exists
+        # without an agent decision row.
+        db.connection.execute("DELETE FROM job_decisions WHERE job_url = ?", (JOB_URL,))
+        db.connection.commit()
+    elif stored_verdict:
+        db.record_evaluation(
+            JOB_URL,
+            verdict=stored_verdict,
+            rationale="Previously evaluated",
+            model="test-model",
+            confidence=90,
+            overrides=[],
+            details={"match": {"previous": True}, "decision": {"decision": "APPLY"}},
+        )
+    if application_status:
+        db.connection.execute(
+            "INSERT INTO applications (job_url, status) VALUES (?, ?)",
+            (JOB_URL, application_status),
+        )
+        db.connection.commit()
+    agent = StubDecisionAgent()
+
+    try:
+        result = evaluator.evaluate_job_fit(
+            JOB_URL,
+            db,
+            agent=agent,
+        )
+
+        assert result["evaluation_skipped"] is True
+        assert result["already_evaluated"] is True
+        assert result["skip_reason"] == skip_reason
+        assert agent.history is None
+        assert result["match"] == ({"previous": True} if stored_verdict else None)
+    finally:
+        db.close()
+
+
+def test_unprocessed_jobs_excludes_m4_evaluations(tmp_path: Path) -> None:
+    db = _database(tmp_path)
+    try:
+        db.record_evaluation(
+            JOB_URL,
+            verdict="SKIP",
+            rationale="Previously evaluated",
+            model="test-model",
+            confidence=80,
+            overrides=[],
+            details={},
+        )
+        assert db.get_unprocessed_jobs(10) == []
+        db.connection.execute("DELETE FROM job_decisions WHERE job_url = ?", (JOB_URL,))
+        db.connection.execute(
+            "INSERT INTO applications (job_url, status) VALUES (?, 'APPLIED')",
+            (JOB_URL,),
+        )
+        db.connection.commit()
+        assert db.get_unprocessed_jobs(10) == []
+    finally:
+        db.close()
+
+
 def test_cover_letter_requires_apply_recommendation_and_persists_path(
     tmp_path: Path,
 ) -> None:
