@@ -13,10 +13,12 @@ optional and requires `JOB_AGENT_ALLOW_REMOTE_AGENT_DATA=true` for a remote
 endpoint. In that case, conversation and tool-result content can leave the
 machine. The daily task does not use this chat provider.
 
-Daily mode runs the existing discovery/evaluation routine without review,
-cover letters by default, then uses the tracking MCP server to sync read-only
-email and print a local digest. Remote cover-letter generation can be enabled
-explicitly; it sends the candidate profile and job details to Gemini.
+Daily mode runs the existing discovery/evaluation routine without review and
+generates cover letters with Gemini by default. Candidate profile and job
+details are sent to Gemini without a per-letter confirmation; use
+`--no-remote-letters` to skip them. Each run also backfills missing letters for
+previously recommended jobs without re-evaluating them. It then uses the
+tracking MCP server to sync read-only email and print a local digest.
 Application submission, email sending, and calendar writes are not part of
 unattended preparation; MCP confirmation tools remain interactive.
 

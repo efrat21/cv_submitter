@@ -124,8 +124,8 @@ uv run job-agent chat
 The host starts only the configured local MCP servers and exposes an allowlist
 of their tools. Job postings and email text returned by those tools are treated
 as untrusted data. Review and calendar tools retain their in-band confirmation
-prompts; cover-letter generation asks before sending candidate/job data to
-Gemini.
+prompts. Cover-letter generation sends candidate/job data to Gemini without a
+per-generation confirmation; review the resulting draft before using it.
 Boolean consent prompts can be answered `y`; multi-field review forms accept a
 JSON object matching the fields shown in the terminal.
 
@@ -135,10 +135,13 @@ Run the unattended daily preparation and local digest:
 uv run job-agent daily --name "Your Name" --email "you@example.com"
 ```
 
-This runs the existing routine with `--no-review`, then syncs Gmail and prints
-the digest. Remote cover-letter generation is off by default; enabling
-`--allow-remote-letters` sends candidate profile and job details to Gemini.
-It does not submit applications, approve calendar events, or email the digest.
+This runs the existing routine with `--no-review`, generates cover letters with
+Gemini by default, then syncs Gmail and prints the digest. Candidate profile
+and job details are sent to Gemini for each generated letter. Pass
+`--no-remote-letters` to skip cloud letter generation. The daily workflow does
+not submit applications, approve calendar events, or email the digest. It also
+generates any missing letters for previously recommended jobs without
+re-evaluating them.
 For a digest without job preparation or Gmail access, use
 `--skip-job-prep --skip-email-sync`.
 
@@ -166,14 +169,14 @@ case from its own history examples, and reports `NOT_RECOMMENDED` cases
 separately as legacy-agent consistency checks.
 
 Register or update the Windows daily task (it runs preparation only; review
-remains interactive and remote cover letters are off by default):
+remains interactive and cover letters are generated through Gemini by default):
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\setup_daily_task.ps1 -Name "Your Name" -Email "you@example.com"
 ```
 
-Use `-AllowRemoteLetters` only if you explicitly want the scheduled run to
-send candidate profile and job details to Gemini when drafting letters.
+Use `-NoRemoteLetters` to opt out of cloud cover-letter generation in the
+scheduled run. Re-run the setup script to update an existing scheduled task.
 
 ---
 

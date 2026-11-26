@@ -10,6 +10,7 @@ Options:
     -Time "09:00"        when to run
     -ProjectDir "D:\cv_submitter"   folder that contains data\ and src\ (default: current folder)
     -TaskName "JobAgentDaily"
+    -NoRemoteLetters     skip cloud cover-letter generation (enabled by default)
 
 Test it right now:     Start-ScheduledTask -TaskName JobAgentDaily
 Remove it:             Unregister-ScheduledTask -TaskName JobAgentDaily -Confirm:$false
@@ -20,7 +21,7 @@ param(
     [string]$Name = "",
     [string]$Email = "",
     [string]$TaskName = "JobAgentDaily",
-    [switch]$AllowRemoteLetters
+    [switch]$NoRemoteLetters
 )
 
 $ErrorActionPreference = "Stop"
@@ -41,8 +42,8 @@ $lines = @(
 )
 $lines += 'call ".venv\Scripts\activate.bat"'
 $dailyCommand = 'python -m job_agent.cli.host daily --name "{0}" --email "{1}"' -f $Name, $Email
-if ($AllowRemoteLetters) {
-    $dailyCommand += ' --allow-remote-letters'
+if ($NoRemoteLetters) {
+    $dailyCommand += ' --no-remote-letters'
 }
 $lines += $dailyCommand
 $lines | Set-Content -Path $bat -Encoding ASCII

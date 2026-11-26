@@ -10,7 +10,7 @@ overridden with `JOB_AGENT_PROFILE_PATH` and `JOB_AGENT_PREFERENCES_PATH`.
 | Tool | Input | Behavior |
 | --- | --- | --- |
 | `evaluate_job_fit` | `job_url` | Runs deterministic matching and guarded local Ollama evaluation only if the existing database has no successful evaluation or human action for the job. Returns `evaluation_skipped: true` for already-evaluated/applied jobs instead of invoking the model again. |
-| `generate_cover_letter` | `job_url`, optional `candidate_name`, optional `use_factchecker` | Generates a draft only for a job with an `APPLY` recommendation, saves it, and records its path. Candidate profile and job details are sent to the configured Gemini provider. |
+| `generate_cover_letter` | `job_url`, optional `candidate_name`, optional `use_factchecker` | Generates a draft only for a job with an `APPLY` recommendation, saves it, and records its path. Candidate profile and job details are sent to Gemini without per-generation confirmation; the draft still requires human review. |
 | `get_application_review` | `job_url` | Returns the stored job, recommendation, and any cover-letter path for human review. |
 | `review_application` | `job_url` | Presents the review context and elicits an explicit human `APPLIED` or `SKIPPED` decision and confirmation. Cancellation or declined confirmation leaves the job action unchanged. `APPLIED` means the person submitted manually outside this tool. |
 | `get_decision_feedback` | optional `limit` (1–500) | Returns human `APPLIED`/`SKIPPED` history used as preference context for later evaluations. Agent recommendations are not fed back as human decisions. |

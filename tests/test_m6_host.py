@@ -19,6 +19,7 @@ from job_agent.agent_host import (
 )
 from job_agent.database import JobDatabase
 from job_agent.evaluation_harness import run_regression_evaluation
+from job_agent.cli.host import _parser
 
 
 PROFILE = {"name": "Test", "skills": {"Python": ["Built Python services"]}}
@@ -123,7 +124,7 @@ def test_mcp_bridge_rejects_non_allowlisted_tool_and_audits_success(
     ]
 
 
-def test_cover_letter_mcp_tool_requires_consent_before_provider_use(
+def test_cover_letter_mcp_tool_uses_gemini_without_per_job_confirmation(
     tmp_path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -142,27 +143,20 @@ def test_cover_letter_mcp_tool_requires_consent_before_provider_use(
     monkeypatch.setattr(
         host,
         "generate_letter",
-        lambda *args, **kwargs: provider_calls.append((args, kwargs)),
+        lambda *args, **kwargs: provider_calls.append((args, kwargs))
+        or {"generated": True},
     )
-
-    class CancelledContext:
-        async def elicit(self, message, schema):
-            assert "sends the candidate profile and job details" in message
-            return SimpleNamespace(action="cancel", data=None)
 
     try:
         result = asyncio.run(
-            host.generate_cover_letter(
-                "https://jobs.example/1", CancelledContext()
-            )
+            host.generate_cover_letter("https://jobs.example/1")
         )
-        assert result["generated"] is False
-        assert result["external_data_transfer"] is False
-        assert provider_calls == []
+        assert result == {"generated": True}
+        assert len(provider_calls) == 1
         assert db.connection.execute(
-            "SELECT approved FROM audit_log "
-            "WHERE event_type = 'cover_letter.external_transfer_declined'"
-        ).fetchone() == (0,)
+            "SELECT actor, approval_required, approved FROM audit_log "
+            "WHERE event_type = 'cover_letter.external_transfer_started'"
+        ).fetchone() == ("system", 0, 0)
     finally:
         db.close()
 
@@ -220,7 +214,7 @@ def test_remote_ollama_endpoint_requires_explicit_data_opt_in(
         agent_host.OllamaProvider(host="https://models.example")
 
 
-def test_daily_mode_prepares_without_review_then_syncs_and_digests(
+def test_daily_mode_generates_remote_letters_by_default_then_syncs_and_digests(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     prepared = []
@@ -252,11 +246,11 @@ def test_daily_mode_prepares_without_review_then_syncs_and_digests(
     monkeypatch.setattr(agent_host, "MCPToolBridge", Bridge)
 
     result = asyncio.run(agent_host.daily_mode(name="Candidate", email="a@example.test"))
-    assert prepared == [("Candidate", "a@example.test", {"allow_remote_letters": False})]
+    assert prepared == [("Candidate", "a@example.test", {"generate_remote_letters": True})]
     assert result == {"email_sync": '{"synced": 2}', "digest": "Daily digest"}
 
 
-def test_daily_job_prep_never_sends_letters_without_explicit_opt_in(
+def test_daily_job_prep_generates_remote_letters_by_default(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     commands = []
@@ -269,12 +263,22 @@ def test_daily_job_prep_never_sends_letters_without_explicit_opt_in(
 
     agent_host._run_job_preparation("Candidate", "person@example.test")
     assert "--no-review" in commands[0]
-    assert "--no-cover-letters" in commands[0]
+    assert "--no-cover-letters" not in commands[0]
 
     agent_host._run_job_preparation(
-        "Candidate", "person@example.test", allow_remote_letters=True
+        "Candidate", "person@example.test", generate_remote_letters=False
     )
-    assert "--no-cover-letters" not in commands[1]
+    assert "--no-cover-letters" in commands[1]
+
+
+def test_daily_cli_generates_cloud_letters_by_default_with_opt_out() -> None:
+    assert _parser().parse_args(["daily"]).no_remote_letters is False
+    assert (
+        _parser()
+        .parse_args(["daily", "--no-remote-letters"])
+        .no_remote_letters
+        is True
+    )
 
 
 def test_cli_package_module_is_runnable() -> None:
@@ -308,57 +312,18 @@ def test_mcp_stdio_bridge_connects_to_real_jobs_server(
     assert result["total_jobs"] == 0
 
 
-def test_real_cover_letter_tool_cancellation_blocks_external_transfer(
-    tmp_path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    job_url = "https://jobs.example/recommended"
-    db_path = tmp_path / "jobs.db"
-    db = JobDatabase(db_path)
-    db.save_job(
-        {
-            "url": job_url,
-            "title": "Engineer",
-            "company": "Example",
-            "description": "Python role",
-            "tags": ["Python"],
-        }
-    )
-    db.record_evaluation(
-        job_url,
-        verdict="APPLY",
-        rationale="Relevant experience",
-        model="test",
-        confidence=90,
-        overrides=[],
-        details={},
-    )
-    db.close()
-    monkeypatch.setenv("JOB_AGENT_DB_PATH", str(db_path))
-    monkeypatch.setattr(agent_host, "_audit_tool_call", lambda *_: None)
-    bridge = MCPToolBridge(
-        ["workflow"],
-        input_fn=lambda _: "n",
-    )
+def test_real_cover_letter_mcp_tool_has_no_confirmation_step() -> None:
+    bridge = MCPToolBridge(["workflow"])
 
     async def run():
         async with bridge.connect():
-            return await bridge.call(
-                "workflow__generate_cover_letter",
-                {"job_url": job_url},
-            )
+            binding = bridge.bindings["workflow__generate_cover_letter"][2]
+            parameters = binding["function"]["parameters"]["properties"]
+            return parameters
 
-    result = json.loads(asyncio.run(run()))
-    assert result["generated"] is False
-    assert result["external_data_transfer"] is False
-    db = JobDatabase(db_path)
-    try:
-        assert db.connection.execute(
-            "SELECT approved FROM audit_log "
-            "WHERE event_type = 'cover_letter.external_transfer_declined'"
-        ).fetchone() == (0,)
-    finally:
-        db.close()
+    parameters = asyncio.run(run())
+    assert "job_url" in parameters
+    assert "ctx" not in parameters
 
 
 def test_regression_harness_excludes_current_row_and_separates_legacy_decisions(

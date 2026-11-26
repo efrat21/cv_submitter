@@ -555,7 +555,7 @@ async def interactive_chat(
 
 
 def _run_job_preparation(
-    name: str, email: str, *, allow_remote_letters: bool = False
+    name: str, email: str, *, generate_remote_letters: bool = True
 ) -> None:
     command = [
         sys.executable,
@@ -567,7 +567,7 @@ def _run_job_preparation(
         "--email",
         email,
     ]
-    if not allow_remote_letters:
+    if not generate_remote_letters:
         command.append("--no-cover-letters")
     if os.environ.get("JOB_AGENT_DB_PATH"):
         command.extend(["--db", os.environ["JOB_AGENT_DB_PATH"]])
@@ -587,12 +587,12 @@ async def daily_mode(
     email: str,
     skip_job_prep: bool = False,
     skip_email_sync: bool = False,
-    allow_remote_letters: bool = False,
+    generate_remote_letters: bool = True,
 ) -> dict[str, Any]:
     """Run job preparation without review, then sync email and print a local digest."""
     if not skip_job_prep:
         _run_job_preparation(
-            name, email, allow_remote_letters=allow_remote_letters
+            name, email, generate_remote_letters=generate_remote_letters
         )
     bridge = MCPToolBridge(["tracking"])
     async with bridge.connect():

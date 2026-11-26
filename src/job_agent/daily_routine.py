@@ -34,14 +34,14 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
-from src.job_agent.config import DATA_DIR
-from src.job_agent.database import JobDatabase
-from src.job_agent.devbg.scraper import DevBgScraper
-from src.job_agent.llm.cover_letter import CoverLetterAgent
-from src.job_agent.llm.decision_agent import DecisionAgent
-from src.job_agent.llm.evaluator import assess_job
-from src.job_agent.models import CandidatePreferences, CandidateProfile, Job
-from src.job_agent.review import letter_path_for, review_applications
+from job_agent.config import DATA_DIR
+from job_agent.database import JobDatabase
+from job_agent.devbg.scraper import DevBgScraper
+from job_agent.llm.cover_letter import CoverLetterAgent
+from job_agent.llm.decision_agent import DecisionAgent
+from job_agent.llm.evaluator import assess_job
+from job_agent.models import CandidatePreferences, CandidateProfile, Job
+from job_agent.review import letter_path_for, review_applications
 
 DEFAULT_URLS_FILE = "data/daily_urls.txt"
 
@@ -107,10 +107,15 @@ def wait_until(hhmm: str) -> None:
     time.sleep((target - now).total_seconds())
 
 
-def jobs_with_action(db: JobDatabase, action: str, limit: int = 500) -> List[Job]:
-    cur = db.connection.execute(
-        "SELECT * FROM jobs WHERE action = ? ORDER BY id DESC LIMIT ?", (action, limit)
-    )
+def jobs_with_action(
+    db: JobDatabase, action: str, limit: int | None = None
+) -> List[Job]:
+    query = "SELECT * FROM jobs WHERE action = ? ORDER BY id DESC"
+    parameters: tuple[Any, ...] = (action,)
+    if limit is not None:
+        query += " LIMIT ?"
+        parameters += (limit,)
+    cur = db.connection.execute(query, parameters)
     cols = [c[0] for c in cur.description]
     return [Job.from_dict(dict(zip(cols, row))) for row in cur.fetchall()]
 
@@ -155,8 +160,6 @@ def evaluate_unprocessed(
 
     print(f"[INFO] {len(rows)} unprocessed job(s) (cap: --max-evaluate {args.max_evaluate}).")
     history = db.get_feedback_history()
-    (Path(DATA_DIR) / "cover_letters").mkdir(parents=True, exist_ok=True)
-    letter_agent = None if args.no_cover_letters else CoverLetterAgent()
 
     for i, row in enumerate(rows, 1):
         job = Job.from_dict(row)
@@ -168,17 +171,8 @@ def evaluate_unprocessed(
                 raise RuntimeError(decision.error)
 
             if decision.decision == "APPLY":
-                if letter_agent:
-                    path = letter_path_for(job)
-                    letter_agent.run(profile=profile, job=job, candidate_name=args.name,
-                                     decision_context=decision, save_path=path)
-                    print(f"    -> APPLY (conf {decision.confidence}); letter: {path.name}")
-                else:
-                    print(
-                        f"    -> APPLY (conf {decision.confidence}); "
-                        "cover letter skipped (remote generation not enabled)"
-                    )
                 db.record_action(job.url, "RECOMMENDED")
+                print(f"    -> APPLY (conf {decision.confidence})")
                 stats["recommended"] += 1
             else:
                 db.record_action(job.url, "NOT_RECOMMENDED")
@@ -190,6 +184,58 @@ def evaluate_unprocessed(
             print(f"    [ERROR] {exc}")
             db.record_action(job.url, "EVAL_ERROR")
             stats["errors"] += 1
+    return stats
+
+
+def generate_missing_cover_letters(
+    args: argparse.Namespace,
+    db: JobDatabase,
+    profile: CandidateProfile | None = None,
+) -> Dict[str, int]:
+    """Generate letters for every recommended job whose letter file is missing."""
+    stats = {"generated": 0, "errors": 0}
+    if args.no_cover_letters:
+        return stats
+
+    missing: List[Tuple[Job, Path]] = []
+    for job in jobs_with_action(db, "RECOMMENDED"):
+        path = letter_path_for(job)
+        if not path.is_file():
+            missing.append((job, path))
+
+    if not missing:
+        print("[INFO] No recommended jobs are missing cover letters.")
+        return stats
+
+    if profile is None:
+        profile = CandidateProfile.from_dict(load_json(args.profile))
+    letter_agent = CoverLetterAgent()
+
+    for idx, (job, path) in enumerate(missing, start=1):
+        print(
+            f"\n[{idx}/{len(missing)}] Generating missing cover letter for: "
+            f"{job.title} @ {job.company}"
+        )
+        try:
+            content = letter_agent.run(
+                profile=profile,
+                job=job,
+                candidate_name=args.name,
+                save_path=path,
+            )
+            if not content.strip() or not path.is_file():
+                raise RuntimeError(
+                    f"Cover-letter generator did not save a letter to {path}"
+                )
+            print(f"    -> Saved to: {path}")
+            stats["generated"] += 1
+        except Exception as exc:  # noqa: BLE001 - continue processing other recommendations
+            print(f"    [ERROR] Cover letter failed: {exc}")
+            stats["errors"] += 1
+
+    print(
+        f"\n[LETTERS] generated {stats['generated']} | errors {stats['errors']}"
+    )
     return stats
 
 
@@ -263,6 +309,7 @@ def main() -> None:
     banner(f"DAILY JOB ROUTINE  {datetime.now():%Y-%m-%d %H:%M}")
     db = JobDatabase(path=args.db)
     try:
+        profile: CandidateProfile | None = None
         if not args.review_only:
             targets = read_urls(args)
             missing = [cv for _, cv in targets if cv and not Path(cv).expanduser().is_file()]
@@ -274,17 +321,19 @@ def main() -> None:
             profile = CandidateProfile.from_dict(load_json(args.profile))
             prefs = CandidatePreferences.from_dict(load_json(args.preferences))
             agent = DecisionAgent(model=args.model, min_confidence=args.min_confidence)
-            try:  # fail early if Ollama isn't running
-                agent.client.list()
-            except Exception as exc:  # noqa: BLE001
-                sys.exit(f"Cannot reach Ollama ({exc}). Start it first (e.g. `ollama serve`).")
 
             if not args.skip_scrape:
                 scrape_all(args, db, targets)
+            if db.get_unprocessed_jobs(args.max_evaluate):
+                try:  # fail early if Ollama is needed for new evaluations
+                    agent.client.list()
+                except Exception as exc:  # noqa: BLE001
+                    sys.exit(f"Cannot reach Ollama ({exc}). Start it first (e.g. `ollama serve`).")
             stats = evaluate_unprocessed(args, db, profile, prefs, agent)
             print(f"\n[SUMMARY] evaluated {stats['evaluated']} | recommended {stats['recommended']} "
                   f"| rejected {stats['rejected']} | errors {stats['errors']}")
 
+        generate_missing_cover_letters(args, db, profile)
         review_queue(args, db)
 
         try:

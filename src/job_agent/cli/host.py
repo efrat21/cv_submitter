@@ -36,9 +36,9 @@ def _parser() -> argparse.ArgumentParser:
         help="Do not access Gmail; still print the local digest",
     )
     daily.add_argument(
-        "--allow-remote-letters",
+        "--no-remote-letters",
         action="store_true",
-        help="Allow cover-letter generation to send candidate/job data to Gemini",
+        help="Skip cloud cover-letter generation (enabled by default; sends candidate/job data to Gemini)",
     )
 
     regression = commands.add_parser(
@@ -64,7 +64,7 @@ def main() -> None:
                 email=args.email,
                 skip_job_prep=args.skip_job_prep,
                 skip_email_sync=args.skip_email_sync,
-                allow_remote_letters=args.allow_remote_letters,
+                generate_remote_letters=not args.no_remote_letters,
             )
         )
         if args.skip_email_sync:

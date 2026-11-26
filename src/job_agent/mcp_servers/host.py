@@ -48,15 +48,6 @@ class HumanReviewResponse(BaseModel):
     )
 
 
-class CoverLetterConsent(BaseModel):
-    confirmed: bool = Field(
-        description=(
-            "Confirm that candidate profile and job details may be sent to the "
-            "configured Gemini provider to draft a cover letter."
-        )
-    )
-
-
 def _open_db() -> JobDatabase:
     path = os.environ.get("JOB_AGENT_DB_PATH")
     return JobDatabase(Path(path) if path else DEFAULT_DB_PATH)
@@ -103,54 +94,22 @@ def evaluate_job_fit(job_url: str) -> dict[str, Any]:
 @mcp.tool()
 async def generate_cover_letter(
     job_url: str,
-    ctx: Context,
     candidate_name: str = "",
     use_factchecker: bool = False,
 ) -> dict[str, Any]:
     """Generate an evidence-grounded letter for a job recommended for review.
 
-    Uses the configured Gemini API; the candidate profile and job details are
-    sent to that configured provider. The generated letter is a draft requiring
-    human review, not an application submission.
+    Sends the candidate profile and job details to the configured Gemini API.
+    The generated letter is a draft requiring human review, not an application
+    submission.
     """
     db = _open_db()
     try:
-        packet = build_review_packet(job_url, db)
-        job = packet["job"]
-        response = await ctx.elicit(
-            f"Drafting a cover letter for {job['title']} at {job['company']} "
-            "sends the candidate profile and job details to the configured "
-            "Gemini provider. Confirm this data transfer to continue.",
-            CoverLetterConsent,
-        )
-        if (
-            response.action != "accept"
-            or response.data is None
-            or not response.data.confirmed
-        ):
-            db.record_audit_event(
-                "cover_letter.external_transfer_declined",
-                actor="human",
-                tool_name="job-agent.generate_cover_letter",
-                details={"job_url": job_url, "status": response.action},
-                approval_required=True,
-                approved=False,
-            )
-            return {
-                "job_url": job_url,
-                "generated": False,
-                "status": response.action
-                if response.action != "accept"
-                else "not_confirmed",
-                "external_data_transfer": False,
-            }
         db.record_audit_event(
-            "cover_letter.external_transfer_approved",
-            actor="human",
+            "cover_letter.external_transfer_started",
+            actor="system",
             tool_name="job-agent.generate_cover_letter",
-            details={"job_url": job_url},
-            approval_required=True,
-            approved=True,
+            details={"job_url": job_url, "provider": "Gemini"},
         )
         return generate_letter(
             job_url,

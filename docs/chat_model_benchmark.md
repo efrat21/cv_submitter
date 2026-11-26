@@ -40,6 +40,10 @@ For the Ollama run, the agent trace recorded approximately **34.3 s** for the to
 - The runs used the same user request and an isolated database, but this was not a controlled apples-to-apples throughput test: only Ollama completed, and the Colibri runs had different server settings and memory pressure.
 - Candidate and job data were not sent to a remote model. The Colibri server was stopped after testing; the model files remain installed locally.
 
+This benchmark covers only the chat-agent runtime. Cover-letter generation is
+a separate workflow and uses Google Gemini; its candidate/job data transfer is
+described in the project workflow documentation.
+
 ## Recommendation
 
 Keep Ollama as the chat-agent runtime on this laptop. Colibri's OpenAI-compatible API is connectable, but this model and hardware did not deliver a usable chat-agent response in the trial. A smaller already-installed Ollama model is a more promising next latency experiment.
