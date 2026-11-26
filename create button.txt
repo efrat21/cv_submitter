@@ -6,12 +6,13 @@ $WshShell = New-Object -ComObject WScript.Shell
 $Desktop = [Environment]::GetFolderPath('Desktop')
 $ShortcutPath = Join-Path $Desktop 'Run Job Agent Daily.lnk'
 
-# Create the shortcut
+# Create the shortcut. This runs the interactive workflow directly; the
+# scheduled task remains reserved for unattended preparation and the digest.
 $Shortcut = $WshShell.CreateShortcut($ShortcutPath)
-$Shortcut.TargetPath = "$env:WINDIR\System32\WindowsPowerShell\v1.0\powershell.exe"
-$Shortcut.Arguments = '-NoProfile -Command "Start-ScheduledTask -TaskName JobAgentDaily"'
+$Shortcut.TargetPath = "$env:WINDIR\System32\cmd.exe"
+$Shortcut.Arguments = '/c ""D:\cv_submitter\run_daily_review.bat""'
 $Shortcut.WorkingDirectory = 'D:\cv_submitter'
-$Shortcut.Description = 'Start the daily job application routine'
+$Shortcut.Description = 'Run the daily job preparation and review routine'
 $Shortcut.Save()
 
 Write-Host "Shortcut saved to: $ShortcutPath"

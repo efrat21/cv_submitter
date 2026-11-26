@@ -28,6 +28,7 @@ An autonomous, AI-assisted job discovery, fit evaluation, and application screen
 
 - **[ONBOARDING.md](file:///d:/cv_submitter/ONBOARDING.md)** — Comprehensive architecture guide, database schema, multi-model AI setup, and bug fix history.
 - **[Project Structure](file:///d:/cv_submitter/project%20structure.md)** — Directory layout and component map.
+- **[Chat Model Benchmark](docs/chat_model_benchmark.md)** — Local Ollama and Colibri chat-agent trial results.
 
 ---
 
@@ -140,6 +141,10 @@ the digest. Remote cover-letter generation is off by default; enabling
 It does not submit applications, approve calendar events, or email the digest.
 For a digest without job preparation or Gmail access, use
 `--skip-job-prep --skip-email-sync`.
+
+For interactive job review, use the **Run Job Agent Daily** desktop shortcut.
+It runs `run_daily_review.bat` directly and waits for your decision on each
+recommended job; the scheduled task remains non-interactive.
 
 Configure the chat model with `JOB_AGENT_AGENT_PROVIDER=ollama` (default),
 `JOB_AGENT_AGENT_MODEL`, and `OLLAMA_HOST`. An OpenAI-compatible provider can
