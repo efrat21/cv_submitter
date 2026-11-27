@@ -1,5 +1,10 @@
 # Roadmap
 
+## User deployment and onboarding
+
+- See [User Deployment and Onboarding Plan](deployment_and_onboarding_plan.md)
+  for the Windows `.exe` release plan and the three guided setup routines.
+
 ## M6 - Agent host, scheduling, evaluation, and hardening
 
 - Interactive `job-agent chat` connects to the jobs DB, workflow, and tracking
